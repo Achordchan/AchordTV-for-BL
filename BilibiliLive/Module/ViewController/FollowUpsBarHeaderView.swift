@@ -59,16 +59,20 @@ final class FollowUpsBarHeaderView: UICollectionReusableView {
 
     /// 更新 UP 主列表与当前选中项；追加数据时只插入新增项，避免打断正在横排里的焦点
     func update(users newUsers: [WebRequest.FollowingUser], selectedMid newSelectedMid: Int?) {
-        let oldCount = users.count
+        let oldMids = users.map(\.mid)
+        let oldCount = oldMids.count
         let shownCount = collectionView.numberOfItems(inSection: 0)
         let selectionChanged = selectedMid != newSelectedMid
         users = newUsers
         selectedMid = newSelectedMid
 
-        if newUsers.count > oldCount, shownCount == oldCount + 1 {
+        let isAppend = newUsers.count > oldCount && newUsers.prefix(oldCount).map(\.mid) == oldMids
+        if isAppend, shownCount == oldCount + 1 {
+            // 翻页追加：只插入新的项，不打断当前焦点
             let added = (oldCount..<newUsers.count).map { IndexPath(item: $0 + 1, section: 0) }
             collectionView.insertItems(at: added)
-        } else if newUsers.count != oldCount || shownCount != newUsers.count + 1 {
+        } else if newUsers.map(\.mid) != oldMids || shownCount != newUsers.count + 1 {
+            // 刷新后列表内容变了（新增、取关、顺序变化）
             collectionView.reloadData()
         }
 

@@ -137,6 +137,8 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     private var followingsFinished = false
     private var followingsLoading = false
     private var followingsRetryTask: Task<Void, Never>?
+    /// 刷新关注列表时加一，丢弃刷新前发出的翻页请求
+    private var followingsGeneration = 0
     /// 当前选中的 UP 主；nil 表示「全部」
     private var selectedMid: Int?
     private var pendingReload = false
@@ -160,11 +162,6 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
             }
             header.update(users: self.followings, selectedMid: self.selectedMid)
         }
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        loadMoreFollowings()
     }
 
     override func reallyReloadData() async {
@@ -252,25 +249,39 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
         selectedMid = mid
         selectionGeneration += 1
         headerView?.update(users: followings, selectedMid: mid)
-        reloadData()
+        // 只按新的筛选重载视频，不刷新关注列表
+        super.reloadData()
     }
 
-    private func loadMoreFollowings() {
+    /// - Parameter replacing: 为 true 时从第一页重新拉取，结果替换现有列表（显式刷新用）
+    private func loadMoreFollowings(replacing: Bool = false) {
+        if replacing {
+            followingsGeneration += 1
+            followingsPage = 0
+            followingsFinished = false
+            followingsLoading = false
+        }
         guard !followingsLoading, !followingsFinished else { return }
         followingsLoading = true
         followingsRetryTask?.cancel()
         followingsRetryTask = nil
+        let generation = followingsGeneration
+        let page = followingsPage + 1
         Task {
-            defer { followingsLoading = false }
             do {
-                let next = try await WebRequest.requestFollowing(page: followingsPage + 1)
-                followingsPage += 1
+                let next = try await WebRequest.requestFollowing(page: page)
+                guard generation == followingsGeneration else { return }
+                followingsLoading = false
+                followingsPage = page
                 // 只有成功拿到空页才算到底
                 followingsFinished = next.isEmpty
-                let known = Set(followings.map(\.mid))
-                followings.append(contentsOf: next.filter { !known.contains($0.mid) })
+                let base = page == 1 ? [] : followings
+                let known = Set(base.map(\.mid))
+                followings = base + next.filter { !known.contains($0.mid) }
                 headerView?.update(users: followings, selectedMid: selectedMid)
             } catch {
+                guard generation == followingsGeneration else { return }
+                followingsLoading = false
                 // 失败不标记到底：稍后自动重试一次；之后横排滚到末尾或页面刷新时也会再试
                 scheduleFollowingsRetry()
             }
@@ -286,12 +297,11 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
         }
     }
 
+    /// 显式刷新（首次加载、下拉/Tab 重选刷新）：视频和顶部关注列表一起重新拉取，
+    /// 关注或取关的变化会反映到 UP 主横排里。切换筛选走 select(mid:)，不刷新关注列表。
     override func reloadData() {
         super.reloadData()
-        // 关注列表之前加载失败、还是空的，刷新时顺便重试
-        if followings.isEmpty {
-            loadMoreFollowings()
-        }
+        loadMoreFollowings(replacing: true)
     }
 }
 
