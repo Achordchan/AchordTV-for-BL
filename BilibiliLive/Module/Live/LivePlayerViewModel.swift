@@ -51,10 +51,14 @@ class LivePlayerViewModel {
                 try await initPlayer()
 
                 let danmu = await initDanmu()
-                let linePlugin = LineCandidatesPlugin(candidates: playInfos) { [weak self] url in
-                    self?.playPlugin.play(urlString: url)
+                let optionsPlugin = await makeOptionsPlugin()
+                // 状态浮层最后添加，保证盖在弹幕之上
+                let networkStatus = await MainActor.run {
+                    PlaybackNetworkStatusPlugin { [weak self] in
+                        self?.transportStatus() ?? .unknown
+                    }
                 }
-                self.onPluginReady?(danmu + [linePlugin])
+                self.onPluginReady?(danmu + [optionsPlugin, networkStatus])
 
                 if let info = await fetchDespInfo() {
                     let subtitle = "\(room.ownerName)·\(info.parent_area_name) \(info.area_name)"
@@ -65,6 +69,8 @@ class LivePlayerViewModel {
                     let infoPlugin = BVideoInfoPlugin(title: room.title, subTitle: nil, desp: nil, pic: room.pic, viewPoints: nil)
                     self.onPluginReady?([infoPlugin])
                 }
+            } catch is CancellationError {
+                // 取流请求已被更新的请求（例如切换清晰度）取代
             } catch let err {
                 await MainActor.run {
                     onError?(String(describing: err))
@@ -91,6 +97,8 @@ class LivePlayerViewModel {
                 } else {
                     try await playFirstInfo()
                 }
+            } catch is CancellationError {
+                // 已被更新的取流请求取代
             } catch let err {
                 await MainActor.run {
                     onError?(err.localizedDescription)
@@ -99,8 +107,88 @@ class LivePlayerViewModel {
         }
     }
 
+    /// 切换清晰度（在主线程调用）：按新的 qn 重新取流并从推荐线路开始播放。
+    /// 连续切换时只有最后一次生效：之前的任务被取消，迟到的响应和失败都会被丢弃（见 initPlayer）。
+    /// 切换尚未完成时选回正在播放的清晰度，等于撤回这次切换。
+    func switchQuality(qn: Int) {
+        if qn == activePlayInfo?.current_qn {
+            guard pendingSwitchID != 0 else { return }
+            // 撤回尚未完成的切换：作废它的请求，保持当前播放
+            qualitySwitchTask?.cancel()
+            qualitySwitchTask = nil
+            pendingSwitchID = 0
+            streamGeneration += 1
+            requestedQn = qn
+            optionsPlugin?.reloadMenus()
+            return
+        }
+
+        switchCounter += 1
+        let switchID = switchCounter
+        pendingSwitchID = switchID
+        requestedQn = qn
+        retryCount = 0
+        qualitySwitchTask?.cancel()
+        // 在这里同步作废之前的所有取流请求，旧响应即使已在等待提交也不会再播放
+        streamGeneration += 1
+        let generation = streamGeneration
+        qualitySwitchTask = Task {
+            do {
+                try await initPlayer(generation: generation, qn: qn)
+                optionsPlugin?.reloadMenus()
+            } catch is CancellationError {
+                // 被更新的切换取代或已撤回
+            } catch let err {
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        onError?(err.localizedDescription)
+                    }
+                }
+            }
+            await MainActor.run {
+                if pendingSwitchID == switchID { pendingSwitchID = 0 }
+            }
+        }
+    }
+
+    /// 当前实际在播的那条流；同一次取流里不同封装/编码的实际清晰度可能不同，必须按在播地址取
+    private var activePlayInfo: LivePlayUrlInfo? {
+        let currentUrl = playPlugin.currentURLString
+        return allPlayInfos.first { $0.url == currentUrl } ?? allPlayInfos.first
+    }
+
+    /// 右下角状态：当前清晰度 · 线路（直播没有多 CDN 加速，按线路展示）
+    @MainActor private func transportStatus() -> PlaybackTransportStatus {
+        guard let active = activePlayInfo else { return .unknown }
+        var parts = [String]()
+        if let qn = active.current_qn, let name = qualityOptions.first(where: { $0.qn == qn })?.name {
+            parts.append(name)
+        }
+        let currentUrl = playPlugin.currentURLString
+        if allPlayInfos.count > 1, let currentUrl, let index = allPlayInfos.firstIndex(where: { $0.url == currentUrl }) {
+            parts.append("线路 \(index + 1)")
+        }
+        return parts.isEmpty ? .live(description: "直播") : .live(description: parts.joined(separator: " · "))
+    }
+
+    @MainActor private func makeOptionsPlugin() -> LiveStreamOptionsPlugin {
+        let plugin = LiveStreamOptionsPlugin()
+        plugin.qualities = { [weak self] in self?.qualityOptions ?? [] }
+        plugin.currentQn = { [weak self] in self?.activePlayInfo?.current_qn }
+        plugin.lines = { [weak self] in self?.allPlayInfos ?? [] }
+        plugin.onSelectQuality = { [weak self] qn in
+            self?.switchQuality(qn: qn)
+        }
+        plugin.onSelectLine = { [weak self] url in
+            self?.playPlugin.play(urlString: url)
+        }
+        optionsPlugin = plugin
+        return plugin
+    }
+
     func debugInfo() -> String {
-        return "\(allPlayInfos.first?.formate ?? "") \(allPlayInfos.first?.current_qn ?? 0) retry:\(retryCount)"
+        let active = activePlayInfo
+        return "\(active?.formate ?? "") \(active?.current_qn ?? 0) retry:\(retryCount)"
     }
 
     func fetchDespInfo() async -> WebRequest.LiveRoomInfo? {
@@ -115,6 +203,16 @@ class LivePlayerViewModel {
     private var danMuProvider: LiveDanMuProvider?
     private var retryCount = 0
     private var liveTime: String?
+    /// 请求的清晰度（默认原画；未登录或直播间不支持时接口会自动降级）
+    private var requestedQn = 10000
+    private var qualityOptions = [LiveQualityOption]()
+    private weak var optionsPlugin: LiveStreamOptionsPlugin?
+    private var qualitySwitchTask: Task<Void, Never>?
+    /// 尚未完成的清晰度切换编号；0 表示没有
+    private var pendingSwitchID = 0
+    private var switchCounter = 0
+    /// 每次取流加一；只有最新一次取流的结果会被提交和播放
+    private var streamGeneration = 0
 
     private func refreshRoomsID() async throws {
         let info = try await WebRequest.requestLiveRoomInit(roomID: roomID)
@@ -125,40 +223,71 @@ class LivePlayerViewModel {
         liveTime = info.live_time
     }
 
-    private func initPlayer() async throws {
-        allPlayInfos = []
+    /// 按 requestedQn 取流。结果先在本地组装，回到主线程确认仍是最新一次请求后才提交并开始播放；
+    /// 被更新的请求取代时抛 CancellationError，不改动任何状态。
+    /// - Parameters:
+    ///   - generation: 调用方已在主线程同步分配的代数（切换清晰度时）；为 nil 时在这里分配
+    ///   - qn: 与 generation 一起确定的清晰度；为 nil 时取 requestedQn
+    private func initPlayer(generation preassigned: Int? = nil, qn requested: Int? = nil) async throws {
+        try Task.checkCancellation()
+        let (generation, qn) = await MainActor.run { () -> (Int, Int) in
+            if let preassigned { return (preassigned, requested ?? requestedQn) }
+            streamGeneration += 1
+            return (streamGeneration, requestedQn)
+        }
 
-        let streams = try await WebRequest.requestLiveStreams(roomID: roomID)
+        let playUrl: WebRequest.LivePlayUrl
+        do {
+            playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: qn)
+        } catch {
+            // 请求期间已有更新的取流请求，或任务已取消：这次失败已无意义，不能报给用户
+            let superseded = await MainActor.run { generation != streamGeneration }
+            if superseded || Task.isCancelled { throw CancellationError() }
+            throw error
+        }
+        let streams = playUrl.stream
 
+        var infos = [LivePlayUrlInfo]()
         for stream in streams {
             for content in stream.format {
                 let formate = content.formatName
-                let codecs = content.codec
-                for codec in codecs {
-                    let qn = codec.currentQn
+                for codec in content.codec {
                     let baseUrl = codec.baseurl
                     for url_info in codec.urlInfo {
-                        let host = url_info.host
-                        let extra = url_info.extra
-                        let url = "\(host)\(baseUrl)\(extra)"
-                        let playInfo = LivePlayUrlInfo(formate: formate, url: url, current_qn: qn, codec_name: codec.codecName)
-                        allPlayInfos.append(playInfo)
+                        let url = "\(url_info.host)\(baseUrl)\(url_info.extra)"
+                        infos.append(LivePlayUrlInfo(formate: formate, url: url, current_qn: codec.currentQn, codec_name: codec.codecName))
                     }
                 }
             }
         }
 
-        allPlayInfos.sort { a, b in
+        infos.sort { a, b in
             return a.current_qn ?? 0 > b.current_qn ?? 0
         }
-
-        allPlayInfos.sort { a, b in
+        infos.sort { a, _ in
             return a.formate == "fmp4"
         }
 
-        Logger.debug("all info arry:\(playInfos)")
-        playInfos = allPlayInfos
-        try await playFirstInfo()
+        // 可选清晰度 = 各路流 accept_qn 的并集，名称取 g_qn_desc（原画、蓝光、超清…）
+        let accepted = Set(streams.flatMap { $0.format.flatMap { $0.codec.flatMap { $0.acceptQn ?? [$0.currentQn] } } })
+        let options = (playUrl.g_qn_desc ?? [])
+            .filter { accepted.contains($0.qn) }
+            .sorted { $0.qn > $1.qn }
+            .map { LiveQualityOption(qn: $0.qn, name: $0.desc) }
+
+        let resolved = infos
+        // 先判断是否已被取代，再校验结果：过期响应无论有没有可用地址都直接丢弃，不能报错
+        let committed = try await MainActor.run { () throws -> Bool in
+            guard generation == streamGeneration, !Task.isCancelled else { return false }
+            guard let first = resolved.first else { throw LiveError.noPlaybackUrl }
+            allPlayInfos = resolved
+            playInfos = resolved
+            qualityOptions = options
+            Logger.debug("play => \(first.url)")
+            playPlugin.play(urlString: first.url)
+            return true
+        }
+        if !committed { throw CancellationError() }
     }
 
     func playFirstInfo() async throws {
@@ -230,17 +359,23 @@ extension WebRequest {
         return try await request(url: EndPoint.liveRoomInfo, parameters: ["id": roomID])
     }
 
-    static func requestLiveStreams(roomID: Int) async throws -> [LiveStream] {
+    struct LivePlayUrl: Codable {
+        struct QnDesc: Codable {
+            let qn: Int
+            let desc: String
+        }
+
+        let cid: Int
+        let g_qn_desc: [QnDesc]?
+        let stream: [LiveStream]
+    }
+
+    static func requestLiveStreams(roomID: Int, qn: Int = 10000) async throws -> LivePlayUrl {
         struct LiveRoomStreamInfo: Codable {
             let playurl_info: PlayUrlInfo
 
             struct PlayUrlInfo: Codable {
-                let playurl: PlayUrl
-            }
-
-            struct PlayUrl: Codable {
-                let cid: Int
-                let stream: [LiveStream]
+                let playurl: LivePlayUrl
             }
         }
         let info: LiveRoomStreamInfo = try await request(url: EndPoint.liveRoomStream,
@@ -248,12 +383,12 @@ extension WebRequest {
                                                                       "protocol": "1",
                                                                       "format": "0,1,2",
                                                                       "codec": "0,1",
-                                                                      "qn": "10000",
+                                                                      "qn": "\(qn)",
                                                                       "platform": "web",
                                                                       "ptype": "8",
                                                                       "dolby": "5",
                                                                       "panorama": 1])
-        return info.playurl_info.playurl.stream
+        return info.playurl_info.playurl
     }
 }
 
@@ -276,12 +411,14 @@ struct LiveStream: Codable {
             let urlInfo: [URLInfo]
             let codecName: String
             let currentQn: Int
+            let acceptQn: [Int]?
             let baseurl: String
 
             enum CodingKeys: String, CodingKey {
                 case urlInfo = "url_info"
                 case codecName = "codec_name"
                 case currentQn = "current_qn"
+                case acceptQn = "accept_qn"
                 case baseurl = "base_url"
             }
 
