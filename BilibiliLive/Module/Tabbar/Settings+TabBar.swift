@@ -83,7 +83,9 @@ extension Settings {
     /// 合并后的「关注」取两者中更「显眼」的位置：只要有一个在导航栏，就放在导航栏里靠前的那个位置
     /// （保留原来的启动页），否则放在靠前的那个位置。
     private static func migrateLegacyPages(_ placements: [TabBarPagePlacement]) -> [TabBarPagePlacement] {
-        guard placements.contains(where: { $0.page == .followUps }) else { return placements }
+        // 刷视频模式下「关注UP」仍是独立页面，不迁移
+        guard !TabBarPage.allConfigurablePages.contains(.followUps),
+              placements.contains(where: { $0.page == .followUps }) else { return placements }
         let merged: Set<TabBarPage> = [.follows, .followUps]
         let candidates = placements.indices.filter { merged.contains(placements[$0].page) }
         guard let keep = candidates.first(where: { placements[$0].section == .tabBar }) ?? candidates.first else {
