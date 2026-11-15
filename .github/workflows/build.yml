@@ -4,6 +4,12 @@ on:
   push:
     branches: [ "main" ]
 
+# 同一分支的构建串行执行：推送到 main 的构建按触发顺序依次完成，不会出现旧构建后完成的情况；
+# PR 上的构建只保留最新一次
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Build ipa
@@ -46,8 +52,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 兜底：若已存在更高版本（例如有构建被手动重跑），本次照常发布但不抢占 Latest
+          LATEST="$(gh release view --json tagName --jq .tagName 2>/dev/null | sed 's/^v//' || true)"
+          LATEST_FLAG="--latest"
+          if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]; then
+            echo "已有更高版本 $LATEST，本次 $VERSION 不标记为 Latest"
+            LATEST_FLAG="--latest=false"
+          fi
           gh release create "v$VERSION" AchordTV.ipa \
             --target "$GITHUB_SHA" \
-            --latest \
+            "$LATEST_FLAG" \
             --title "AchordTV for BL $VERSION" \
             --notes "自动构建：$(git log -1 --pretty=%s)（$(git rev-parse --short HEAD)）。未签名 IPA，请用侧载工具签名安装。"
