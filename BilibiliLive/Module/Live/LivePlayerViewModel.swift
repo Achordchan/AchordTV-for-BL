@@ -275,10 +275,11 @@ class LivePlayerViewModel {
             .sorted { $0.qn > $1.qn }
             .map { LiveQualityOption(qn: $0.qn, name: $0.desc) }
 
-        guard let first = infos.first else { throw LiveError.noPlaybackUrl }
         let resolved = infos
-        let committed = await MainActor.run { () -> Bool in
+        // 先判断是否已被取代，再校验结果：过期响应无论有没有可用地址都直接丢弃，不能报错
+        let committed = try await MainActor.run { () throws -> Bool in
             guard generation == streamGeneration, !Task.isCancelled else { return false }
+            guard let first = resolved.first else { throw LiveError.noPlaybackUrl }
             allPlayInfos = resolved
             playInfos = resolved
             qualityOptions = options
