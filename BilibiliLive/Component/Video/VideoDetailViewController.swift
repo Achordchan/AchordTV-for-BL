@@ -144,7 +144,11 @@ class VideoDetailViewController: UIViewController {
         pageCollectionView.collectionViewLayout = makePageCollectionViewLayout()
         pageCollectionView.clipsToBounds = false
         setupPageRangeCollectionView()
-        recommandCollectionView.register(RelatedVideoCell.self, forCellWithReuseIdentifier: String(describing: RelatedVideoCell.self))
+        // 推荐视频与首页同款卡片：封面角标（播放/弹幕/时长）+ 标题 + 头像 · UP 主 · 日期
+        recommandCollectionView.register(FeedCollectionViewCell.self, forCellWithReuseIdentifier: String(describing: FeedCollectionViewCell.self))
+        if let height = recommandCollectionView.constraints.first(where: { $0.firstAttribute == .height && $0.secondItem == nil }) {
+            height.constant = 340
+        }
         ugcCollectionView.register(RelatedVideoCell.self, forCellWithReuseIdentifier: String(describing: RelatedVideoCell.self))
         recommandCollectionView.collectionViewLayout = makeRelatedVideoCollectionViewLayout()
         ugcCollectionView.collectionViewLayout = makeRelatedVideoCollectionViewLayout()
@@ -174,10 +178,15 @@ class VideoDetailViewController: UIViewController {
         ])
         focusGuide.preferredFocusEnvironments = [dislikeButton]
 
-        replysCollectionView.publisher(for: \.contentSize).sink { [weak self] newSize in
-            self?.repliesCollectionViewHeightConstraints.constant = newSize.height
-            self?.view.setNeedsLayout()
-        }.store(in: &subscriptions)
+        // UP 主：头像并入名字按钮作为一个整体；名字和关注按钮去掉玻璃底与描边
+        upButton.isPlain = true
+        followButton.isPlain = true
+        upButton.setLeadingView(avatarImageView, size: 50)
+
+        ReplyCardCell.configureEmbedded(replysCollectionView)
+        replysCollectionView.collectionViewLayout = ReplyCardCell.makeListLayout(spacing: ReplyLayout.spacing, insets: ReplyLayout.insets) { [weak self] in
+            self?.replys?.replies ?? []
+        }
 
         Task { await fetchData() }
     }
@@ -355,6 +364,7 @@ class VideoDetailViewController: UIViewController {
         WebRequest.requestReplys(aid: aid) { [weak self] replys in
             self?.replys = replys
             self?.replysCollectionView.reloadData()
+            self?.updateRepliesHeight()
         }
 
         WebRequest.requestLikeStatus(aid: aid) { [weak self] isLiked in
@@ -443,12 +453,25 @@ class VideoDetailViewController: UIViewController {
         recommandCollectionView.superview?.isHidden = data.Related.count == 0
 
         var notes = [String]()
-        let status = data.View.dynamic ?? ""
-        if status.count > 1, status != data.View.desc {
+        let desc = (data.View.desc ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let status = (data.View.dynamic ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if status.count > 1, status != desc {
             notes.append(status)
         }
-        notes.append(data.View.desc ?? "")
-        noteView.label.text = notes.joined(separator: "\n")
+        // B 站没填简介时返回空字符串或「-」
+        if !desc.isEmpty, desc != "-" {
+            notes.append(desc)
+        }
+        if notes.isEmpty {
+            // 接口确实没有简介：给出提示，避免一大块空白看起来像没加载出来；此时不可选中
+            noteView.label.text = "UP 主没有填写简介"
+            noteView.label.textColor = BLGlass.Color.secondaryText
+            noteView.isEnabled = false
+        } else {
+            noteView.label.text = notes.joined(separator: "\n")
+            noteView.label.textColor = UIColor(named: "titleColor")
+            noteView.isEnabled = true
+        }
         if !isBangumi {
             pages = data.View.pages ?? []
         }
@@ -679,9 +702,9 @@ extension VideoDetailViewController: UICollectionViewDataSource {
             cell.titleLabel.text = page.part
             return cell
         case replysCollectionView:
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: String(describing: ReplyCell.self), for: indexPath) as! ReplyCell
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ReplyCardCell.reuseID, for: indexPath) as! ReplyCardCell
             if let reply = replys?.replies?[indexPath.item] {
-                cell.config(replay: reply)
+                cell.config(reply: reply)
             }
             return cell
         case ugcCollectionView:
@@ -690,9 +713,14 @@ extension VideoDetailViewController: UICollectionViewDataSource {
             cell.update(data: record)
             return cell
         case recommandCollectionView:
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: String(describing: RelatedVideoCell.self), for: indexPath) as! RelatedVideoCell
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: String(describing: FeedCollectionViewCell.self), for: indexPath) as! FeedCollectionViewCell
+            cell.styleOverride = .normal
             if let related = data?.Related[indexPath.row] {
-                cell.update(data: related)
+                cell.setup(data: related)
+                cell.onLongPress = { [weak self] in
+                    guard let self else { return }
+                    VideoQuickActionMenu.shared.present(aid: related.aid, title: related.title, from: self)
+                }
             }
             return cell
         default:
@@ -714,6 +742,23 @@ class BLCardView: TVCardView {
 }
 
 extension VideoDetailViewController {
+    /// 热门评论：一行一条，左右边距与上方「推荐视频」一致（0）
+    enum ReplyLayout {
+        static let spacing: CGFloat = 30
+        static let insets = NSDirectionalEdgeInsets(top: 10, leading: 0, bottom: 40, trailing: 0)
+    }
+
+    /// 评论列表总高度 = 各卡片高度之和 + 间距 + 上下留白
+    func updateRepliesHeight() {
+        let width = replysCollectionView.bounds.width > 0 ? replysCollectionView.bounds.width : view.bounds.width
+        repliesCollectionViewHeightConstraints.constant = ReplyCardCell.listHeight(for: replys?.replies ?? [],
+                                                                                   width: width,
+                                                                                   spacing: ReplyLayout.spacing,
+                                                                                   insets: ReplyLayout.insets)
+        replysCollectionView.collectionViewLayout.invalidateLayout()
+        view.setNeedsLayout()
+    }
+
     func makePageCollectionViewLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout {
             _, _ in
@@ -880,6 +925,10 @@ class NoteDetailView: UIControl {
             make.top.equalToSuperview().offset(14)
             make.bottom.lessThanOrEqualToSuperview().offset(-14)
         }
+    }
+
+    override var canBecomeFocused: Bool {
+        isEnabled
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
