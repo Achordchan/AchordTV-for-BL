@@ -135,6 +135,37 @@ class BLCustomTextButton: BLButton {
         titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
     }
 
+    private var leadingView: UIView?
+
+    /// 在标题左侧嵌入一个视图（如头像），与标题合成一个整体：一起聚焦、一起高亮，按钮变为胶囊形
+    func setLeadingView(_ view: UIView, size: CGFloat, spacing: CGFloat = 14) {
+        leadingView?.removeFromSuperview()
+        leadingView = view
+        view.removeFromSuperview()
+        view.isUserInteractionEnabled = false
+        effectView.contentView.addSubview(view)
+        view.snp.remakeConstraints { make in
+            make.leading.equalToSuperview().inset(8)
+            make.top.bottom.equalToSuperview().inset(8)
+            make.width.height.equalTo(size)
+        }
+        titleLabel.snp.remakeConstraints { make in
+            make.leading.equalTo(view.snp.trailing).offset(spacing)
+            make.trailing.equalToSuperview().inset(24)
+            make.centerY.equalToSuperview()
+            make.top.greaterThanOrEqualToSuperview().inset(8)
+            make.bottom.lessThanOrEqualToSuperview().inset(8)
+        }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if leadingView != nil {
+            effectView.layer.cornerRadius = effectView.bounds.height / 2
+        }
+    }
+
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         titleLabel.textColor = isFocused ? titleSelectedColor : titleColor
@@ -147,6 +178,19 @@ class BLButton: UIControl {
     private let selectedWhiteView = UIView()
 
     var onPrimaryAction: ((BLButton) -> Void)?
+
+    /// 无底板样式：未聚焦时没有玻璃底和描边，只显示内容；聚焦时照常显示白色高亮
+    var isPlain = false {
+        didSet {
+            guard isPlain != oldValue else { return }
+            if isPlain {
+                effectView.effect = nil
+                effectView.layer.borderWidth = 0
+            } else {
+                BLGlass.apply(to: effectView, cornerRadius: effectView.layer.cornerRadius)
+            }
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)

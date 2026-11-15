@@ -916,8 +916,13 @@ extension VideoDetail.Info: DisplayData, PlayableData {
     var overlay: DisplayOverlay? {
         var leftItems = [DisplayOverlay.DisplayOverlayItem]()
         var rightItems = [DisplayOverlay.DisplayOverlayItem]()
-        leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: stat.view == 0 ? "-" : stat.view.numberString()))
-        leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: stat.danmaku == 0 ? "-" : stat.danmaku.numberString()))
+        // 没有数据（0）时不显示该项，避免出现孤零零的「-」
+        if stat.view > 0 {
+            leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: stat.view.numberString()))
+        }
+        if stat.danmaku > 0 {
+            leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: stat.danmaku.numberString()))
+        }
         rightItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: TimeInterval(duration).timeString()))
         return DisplayOverlay(leftItems: leftItems, rightItems: rightItems)
     }
@@ -972,6 +977,10 @@ struct Replys: Codable, Hashable {
         let member: Member
         let content: Content
         let replies: [Reply]?
+        /// 点赞数
+        let like: Int?
+        /// 发布时间（Unix 秒）
+        let ctime: Int?
     }
 
     let replies: [Reply]?
