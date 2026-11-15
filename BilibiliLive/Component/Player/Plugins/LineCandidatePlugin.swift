@@ -38,7 +38,11 @@ class LineCandidatesPlugin: NSObject, CommonPlayerPlugin {
             }
         }
 
-        let menu = UIMenu(title: "画面线路", image: UIImage(systemName: "video.fill"), options: [.singleSelection], children: actions)
+        let menu = UIMenu(title: "线路",
+                          image: UIImage(systemName: "point.3.connected.trianglepath.dotted"),
+                          identifier: PlayerMenu.line,
+                          options: [.singleSelection],
+                          children: actions)
         return [menu]
     }
 

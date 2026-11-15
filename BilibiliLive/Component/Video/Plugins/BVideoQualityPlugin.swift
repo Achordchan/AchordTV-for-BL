@@ -86,7 +86,7 @@ class BVideoQualityPlugin: NSObject, CommonPlayerPlugin {
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
         guard !availableQualities.isEmpty else { return [] }
 
-        let qualityImage = UIImage(systemName: "video.fill")
+        let qualityImage = UIImage(systemName: "sparkles.tv")
 
         // 按画质 ID 分组
         let groupedQualities = Dictionary(grouping: availableQualities, by: { $0.id })

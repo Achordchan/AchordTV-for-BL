@@ -68,17 +68,8 @@ class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
             actions.append(detailAction)
         }
 
-        if let setting = current.compactMap({ $0 as? UIMenu })
-            .first(where: { $0.identifier == UIMenu.Identifier(rawValue: "setting") })
-        {
-            var child = setting.children
-            child.append(contentsOf: actions)
-            if let index = current.firstIndex(of: setting) {
-                current[index] = setting.replacingChildren(child)
-            }
-            return []
-        }
-        return actions
+        PlayerMenu.appendToMore(actions, current: &current)
+        return []
     }
 
     func playerDidEnd(player: AVPlayer) {

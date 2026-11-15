@@ -344,7 +344,7 @@ class VideoPlayerViewModel {
             self?.onShowDetail?(info)
         }
 
-        // SpeedChangerPlugin creates the shared settings menu that later plugins extend.
+        // 底栏按钮的顺序由 PlayerMenu.arrange 统一决定，与插件添加顺序无关
         var plugins: [CommonPlayerPlugin] = [playSpeed, playplugin, danmu, upnp, debug, playlist]
 
         if !data.isBangumi, let detail = data.detail {
@@ -404,6 +404,12 @@ class VideoPlayerViewModel {
             plugins.append(infoPlugin)
             Logger.debug("updateInfoPlugin: title: \(title) subTitle: \(subTitle)")
         }
+
+        // 最后添加，保证状态浮层盖在弹幕等其他浮层之上
+        let networkStatus = PlaybackNetworkStatusPlugin { [weak playplugin] in
+            playplugin?.transportStatus ?? .unknown
+        }
+        plugins.append(networkStatus)
 
         return plugins
     }

@@ -111,7 +111,7 @@ class CommonPlayerViewController: UIViewController {
             let newMenus = activePlugin.addMenuItems(current: &menus)
             menus.append(contentsOf: newMenus)
         }
-        playerVC.transportBarCustomMenuItems = menus
+        playerVC.transportBarCustomMenuItems = PlayerMenu.arrange(menus)
     }
 
     func stopPlayback() {
@@ -238,6 +238,13 @@ extension CommonPlayerViewController: AVPlayerViewControllerDelegate {
             return false
         }
         return false
+    }
+
+    func playerViewController(_ playerViewController: AVPlayerViewController,
+                              willTransitionToVisibilityOfTransportBar visible: Bool,
+                              with coordinator: AVPlayerViewControllerAnimationCoordinator)
+    {
+        activePlugins.forEach { $0.playerTransportBarVisibilityWillChange(visible: visible, coordinator: coordinator) }
     }
 
     @objc func playerViewControllerShouldAutomaticallyDismissAtPictureInPictureStart(_: AVPlayerViewController) -> Bool {

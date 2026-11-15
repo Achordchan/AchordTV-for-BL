@@ -25,6 +25,9 @@ protocol CommonPlayerPlugin: NSObject {
     func playerDidStall(player: AVPlayer)
     func playerDidFail(player: AVPlayer)
     func playerDidCleanUp(player: AVPlayer)
+
+    /// 进度条（transport bar）即将显示 / 隐藏；可在 coordinator 里加同步动画
+    func playerTransportBarVisibilityWillChange(visible: Bool, coordinator: AVPlayerViewControllerAnimationCoordinator)
 }
 
 extension CommonPlayerPlugin {
@@ -44,4 +47,5 @@ extension CommonPlayerPlugin {
     func playerWillCleanUp(playerVC: AVPlayerViewController) {}
     func playerDidChange(player: AVPlayer) {}
     func playerItemDidChange(playerItem: AVPlayerItem) {}
+    func playerTransportBarVisibilityWillChange(visible: Bool, coordinator: AVPlayerViewControllerAnimationCoordinator) {}
 }
