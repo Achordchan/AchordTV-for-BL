@@ -290,33 +290,41 @@ enum ApiRequest {
                 return URL(string: cover)
             }
 
+            /// 卡片第二行只放「作者 · 发布时间」；推荐理由（已关注、xx点赞等）不再顶替发布时间
             var date: String? {
-                if let top_rcmd_reason {
-                    return top_rcmd_reason
-                }
-                if let bottom_rcmd_reason {
-                    return bottom_rcmd_reason
-                }
                 if let desc, desc.contains("·") {
                     return desc.components(separatedBy: "·").last?.trimmingCharacters(in: .whitespaces)
                 }
                 return nil
             }
 
+            /// 推荐理由里的点赞数（如「5万点赞」），用来替换封面右下角的弹幕数
+            private var likeText: String? {
+                [top_rcmd_reason, bottom_rcmd_reason]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+                    .first { $0.contains("点赞") }
+            }
+
             var avatar: URL? { URL(string: avatar_info.cover ?? "") }
             var overlay: DisplayOverlay? {
                 var leftItems = [DisplayOverlay.DisplayOverlayItem]()
                 var rightItems = [DisplayOverlay.DisplayOverlayItem]()
-                if let text = cover_left_text_1 {
+                if let text = Self.validCoverText(cover_left_text_1) {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: text))
                 }
-                if let text = cover_left_text_2 {
+                if let text = Self.validCoverText(cover_left_text_2) {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: text))
                 }
-                if let text = cover_right_text ?? cover_left_text_3 {
+                if let text = likeText ?? Self.validCoverText(cover_right_text) ?? Self.validCoverText(cover_left_text_3) {
                     rightItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: text))
                 }
                 return DisplayOverlay(leftItems: leftItems, rightItems: rightItems)
+            }
+
+            /// 接口在数据缺失或被隐藏时会返回「-弹幕」「-观看」之类的占位文字，这类不显示
+            private static func validCoverText(_ text: String?) -> String? {
+                guard let text = text?.trimmingCharacters(in: .whitespaces), !text.isEmpty, !text.hasPrefix("-") else { return nil }
+                return text
             }
         }
 
@@ -426,6 +434,23 @@ enum ApiRequest {
         let duration: Int
         let ctime: Int
 
+        enum CodingKeys: String, CodingKey {
+            case title, author, param, cover, play, danmaku, duration, ctime
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            title = try container.decode(String.self, forKey: .title)
+            // 联合投稿等条目可能没有 author 字段
+            author = try container.decodeIfPresent(String.self, forKey: .author) ?? ""
+            param = try container.decode(String.self, forKey: .param)
+            cover = try? container.decodeIfPresent(URL.self, forKey: .cover)
+            play = (try? container.decodeIfPresent(Int.self, forKey: .play)) ?? 0
+            danmaku = (try? container.decodeIfPresent(Int.self, forKey: .danmaku)) ?? 0
+            duration = (try? container.decodeIfPresent(Int.self, forKey: .duration)) ?? 0
+            ctime = (try? container.decodeIfPresent(Int.self, forKey: .ctime)) ?? 0
+        }
+
         // PlayableData
         var aid: Int { return Int(param) ?? 0 }
         var cid: Int { return 0 }
@@ -440,16 +465,77 @@ enum ApiRequest {
         var overlay: DisplayOverlay? {
             var leftItems = [DisplayOverlay.DisplayOverlayItem]()
             var rightItems = [DisplayOverlay.DisplayOverlayItem]()
-            leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play == 0 ? "-" : play.numberString()))
-            leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku == 0 ? "-" : danmaku.numberString()))
+            if play > 0 {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play.numberString()))
+            }
+            if danmaku > 0 {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku.numberString()))
+            }
             rightItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: TimeInterval(duration).timeString()))
             return DisplayOverlay(leftItems: leftItems, rightItems: rightItems)
         }
     }
 
+    /// UP 主投稿的一段结果。`videos` 只含能解析的条目，翻页信息按原始条目计算，
+    /// 不会因为跳过了个别条目而误判已经到底。
+    struct UpSpacePage {
+        let videos: [UpSpaceListData]
+        /// 下一页游标：原始最后一条的 aid（即使那条解析失败被跳过）
+        let nextAid: Int?
+        let hasMore: Bool
+    }
+
+    /// 只取单页（不翻页的场景用，如播放页里的「UP 主其他视频」）
     static func requestUpSpaceVideo(mid: Int, lastAid: Int?, pageSize: Int = 20, order: String = "pubdate") async throws -> [UpSpaceListData] {
-        struct Resp: Codable {
-            let item: [UpSpaceListData]
+        try await requestUpSpaceVideoPage(mid: mid, lastAid: lastAid, pageSize: pageSize, order: order).videos
+    }
+
+    /// 翻页列表用：连续拉取，直到凑够 `minCount` 条可用视频或已经没有更多。
+    /// 列表靠返回条数判断是否到底，跳过的条目不能让一页「变短」。最多连拉 `maxPages` 页。
+    static func requestUpSpaceVideos(mid: Int, lastAid: Int?, minCount: Int = 20, order: String = "pubdate", maxPages: Int = 5) async throws -> UpSpacePage {
+        var videos = [UpSpaceListData]()
+        var cursor = lastAid
+        var hasMore = true
+        for _ in 0..<maxPages {
+            try Task.checkCancellation()
+            let page = try await requestUpSpaceVideoPage(mid: mid, lastAid: cursor, order: order)
+            videos.append(contentsOf: page.videos)
+            cursor = page.nextAid
+            hasMore = page.hasMore
+            if videos.count >= minCount || !hasMore { break }
+        }
+        return UpSpacePage(videos: videos, nextAid: cursor, hasMore: hasMore)
+    }
+
+    static func requestUpSpaceVideoPage(mid: Int, lastAid: Int?, pageSize: Int = 20, order: String = "pubdate") async throws -> UpSpacePage {
+        /// 单条解析失败（非普通投稿等）时跳过该条，不让整页失败；但仍记下它的 aid 作为翻页游标
+        struct LossyItem: Decodable {
+            let value: UpSpaceListData?
+            let param: String?
+            enum CodingKeys: String, CodingKey { case param }
+            init(from decoder: Decoder) throws {
+                value = try? UpSpaceListData(from: decoder)
+                param = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(String.self, forKey: .param)
+            }
+        }
+        struct Resp: Decodable {
+            let item: [LossyItem]
+            /// 接口的 has_next 可能是 0/1 数字，也可能是布尔值；都不是或缺失时为 nil
+            let has_next: Bool?
+
+            enum CodingKeys: String, CodingKey { case item, has_next }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                item = try container.decode([LossyItem].self, forKey: .item)
+                if let flag = try? container.decodeIfPresent(Bool.self, forKey: .has_next) {
+                    has_next = flag
+                } else if let number = try? container.decodeIfPresent(Int.self, forKey: .has_next) {
+                    has_next = number != 0
+                } else {
+                    has_next = nil
+                }
+            }
         }
 
         var param: Parameters = ["vmid": mid, "ps": pageSize, "actionKey": "appkey", "disable_rcmd": 0, "fnval": 976, "fnver": 0, "force_host": 0, "fourk": 1, "order": order, "player_net": 1, "qn": 120]
@@ -457,6 +543,9 @@ enum ApiRequest {
             param["aid"] = lastAid
         }
         let resp: Resp = try await request("https://app.bilibili.com/x/v2/space/archive/cursor", parameters: param)
-        return resp.item
+        let nextAid = resp.item.last?.param.flatMap { Int($0) }
+        // 接口有 has_next 就以它为准，没有时按原始条数是否满一页判断
+        let hasMore = (resp.has_next ?? (resp.item.count >= pageSize)) && nextAid != nil
+        return UpSpacePage(videos: resp.item.compactMap(\.value), nextAid: nextAid, hasMore: hasMore)
     }
 }

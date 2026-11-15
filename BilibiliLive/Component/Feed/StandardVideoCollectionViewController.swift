@@ -67,6 +67,12 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
         return [T]()
     }
 
+    /// 刚完成的 request 之后是否还有更多。返回 nil 表示不知道，由列表按返回条数推断；
+    /// 数据源会跳过条目或分批拉取时应明确给出，避免条数不足被误判到底。
+    func hasMoreAfterRequest() -> Bool? {
+        return nil
+    }
+
     func goDetail(with record: T) {
         let detailVC = VideoDetailViewController.create(aid: record.aid, cid: record.cid)
         detailVC.present(from: self)
@@ -89,7 +95,9 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
         do {
             let res = try await request(page: 1)
             collectionVC.displayDatas = []
-            collectionVC.appendData(displayData: res)
+            collectionVC.appendData(displayData: res, hasMore: hasMoreAfterRequest())
+        } catch is CancellationError {
+            // 子类判定结果已过期（例如加载期间切换了筛选），不更新列表也不提示
         } catch let err {
             let alert = UIAlertController(title: "Error", message: "\(err)", preferredStyle: .alert)
             alert.addAction(.init(title: "Ok", style: .cancel))
@@ -104,8 +112,8 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
         Task {
             do {
                 if let res = (try? await request(page: page + 1)) {
-                    collectionVC.appendData(displayData: res)
                     page = page + 1
+                    collectionVC.appendData(displayData: res, hasMore: hasMoreAfterRequest())
                 }
             }
         }

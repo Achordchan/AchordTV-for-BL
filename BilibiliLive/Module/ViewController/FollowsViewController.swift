@@ -88,40 +88,220 @@ final class FollowsViewController: UIViewController, BLTabBarContentVCProtocol {
     }
 }
 
-final class FollowsGridViewController: StandardVideoCollectionViewController<DynamicFeedData> {
+/// 关注页网格里的一条视频：默认来自关注动态；选中某个 UP 主后来自该 UP 主的投稿列表
+enum FollowsVideo: PlayableData {
+    case dynamic(DynamicFeedData)
+    case space(ApiRequest.UpSpaceListData, face: URL?, name: String)
+
+    private var base: any PlayableData {
+        switch self {
+        case let .dynamic(data): return data
+        case let .space(data, _, _): return data
+        }
+    }
+
+    var aid: Int { base.aid }
+    var cid: Int { base.cid }
+    var title: String { base.title }
+    var ownerName: String {
+        if case let .space(data, _, name) = self, data.author.isEmpty {
+            return name
+        }
+        return base.ownerName
+    }
+
+    var pic: URL? { base.pic }
+    var date: String? { base.date }
+    var overlay: DisplayOverlay? { base.overlay }
+    var avatar: URL? {
+        switch self {
+        case let .dynamic(data): return data.avatar
+        case let .space(_, face, _): return face
+        }
+    }
+}
+
+final class FollowsGridViewController: StandardVideoCollectionViewController<FollowsVideo> {
     var lastOffset = ""
     private var nextSourcePage = 1
+    private var spaceLastAid: Int?
+    private var spaceHasMore = true
+    private var dynamicHasMore = true
+    /// 每次切换 UP 主加一；请求返回时代数变了说明结果已过期，直接丢弃（抛 CancellationError，
+    /// 基类不会据此追加数据或翻页，也不会弹错误）
+    private var selectionGeneration = 0
+
+    /// 顶部 UP 主横排
+    private var followings = [WebRequest.FollowingUser]()
+    private var followingsPage = 0
+    private var followingsFinished = false
+    private var followingsLoading = false
+    private var followingsRetryTask: Task<Void, Never>?
+    /// 刷新关注列表时加一，丢弃刷新前发出的翻页请求
+    private var followingsGeneration = 0
+    /// 当前选中的 UP 主；nil 表示「全部」
+    private var selectedMid: Int?
+    private var pendingReload = false
+    private weak var headerView: FollowUpsBarHeaderView?
 
     override func setupCollectionView() {
         super.setupCollectionView()
         collectionVC.pageSize = 1
+        collectionVC.showHeader = true
+        collectionVC.customHeaderConfig = FeedHeaderConfig(viewType: FollowUpsBarHeaderView.self,
+                                                           estimatedHeight: 180)
+        { [weak self] header, _ in
+            guard let self else { return }
+            self.headerView = header
+            header.leadingInset = Settings.displayStyle == .large ? 35 : 30
+            header.onSelect = { [weak self] mid in
+                self?.select(mid: mid)
+            }
+            header.onReachEnd = { [weak self] in
+                self?.loadMoreFollowings()
+            }
+            header.update(users: self.followings, selectedMid: self.selectedMid)
+        }
     }
 
-    override func request(page: Int) async throws -> [DynamicFeedData] {
+    override func reallyReloadData() async {
+        // 切换 UP 主时可能正在加载，记下来等这次加载结束后再按新的选择重载一次
+        if reloading {
+            pendingReload = true
+            return
+        }
+        repeat {
+            pendingReload = false
+            await super.reallyReloadData()
+        } while pendingReload
+    }
+
+    override func request(page: Int) async throws -> [FollowsVideo] {
+        let generation = selectionGeneration
+        do {
+            return try await fetch(page: page, generation: generation)
+        } catch {
+            // 已切换过 UP 主：旧请求的失败也一并丢弃，不能弹错误
+            if generation != selectionGeneration { throw CancellationError() }
+            throw error
+        }
+    }
+
+    override func hasMoreAfterRequest() -> Bool? {
+        selectedMid == nil ? dynamicHasMore : spaceHasMore
+    }
+
+    private func fetch(page: Int, generation: Int) async throws -> [FollowsVideo] {
+        if let mid = selectedMid {
+            if page == 1 {
+                spaceLastAid = nil
+                spaceHasMore = true
+            }
+            guard spaceHasMore else { return [] }
+            let user = followings.first { $0.mid == mid }
+            let res = try await ApiRequest.requestUpSpaceVideos(mid: mid, lastAid: spaceLastAid)
+            // 加载期间已切换过 UP 主，丢弃这次结果，不能动当前列表的翻页状态
+            guard generation == selectionGeneration else { throw CancellationError() }
+            spaceLastAid = res.nextAid
+            spaceHasMore = res.hasMore
+            return res.videos.map { .space($0, face: user?.face, name: user?.uname ?? "") }
+        }
+
         if page == 1 {
             lastOffset = ""
             nextSourcePage = 1
+            dynamicHasMore = true
         }
+        guard dynamicHasMore else { return [] }
 
         for _ in 0..<6 {
             try Task.checkCancellation()
             let requestedOffset = lastOffset
             let info = try await WebRequest.requestFollowsFeed(offset: requestedOffset, page: nextSourcePage)
             try Task.checkCancellation()
+            guard generation == selectionGeneration else { throw CancellationError() }
             nextSourcePage += 1
             lastOffset = info.offset
+            dynamicHasMore = info.has_more && info.offset != requestedOffset
             Logger.debug("request page\(nextSourcePage - 1) get count:\(info.videoFeeds.count) next offset:\(info.offset)")
             if !info.videoFeeds.isEmpty || !info.has_more || info.offset == requestedOffset {
-                return info.videoFeeds
+                return info.videoFeeds.map { .dynamic($0) }
             }
         }
         return []
     }
 
-    override func goDetail(with feed: DynamicFeedData) {
-        let epid = feed.modules.module_dynamic.major?.pgc?.epid
-        let detailVC = VideoDetailViewController.create(aid: feed.aid, cid: feed.cid, epid: epid)
+    override func goDetail(with record: FollowsVideo) {
+        let epid: Int?
+        if case let .dynamic(feed) = record {
+            epid = feed.modules.module_dynamic.major?.pgc?.epid
+        } else {
+            epid = nil
+        }
+        let detailVC = VideoDetailViewController.create(aid: record.aid, cid: record.cid, epid: epid)
         detailVC.present(from: self)
+    }
+
+    // MARK: - UP 主横排
+
+    private func select(mid: Int?) {
+        guard selectedMid != mid else { return }
+        selectedMid = mid
+        selectionGeneration += 1
+        headerView?.update(users: followings, selectedMid: mid)
+        // 只按新的筛选重载视频，不刷新关注列表
+        super.reloadData()
+    }
+
+    /// - Parameter replacing: 为 true 时从第一页重新拉取，结果替换现有列表（显式刷新用）
+    private func loadMoreFollowings(replacing: Bool = false) {
+        if replacing {
+            followingsGeneration += 1
+            followingsPage = 0
+            followingsFinished = false
+            followingsLoading = false
+        }
+        guard !followingsLoading, !followingsFinished else { return }
+        followingsLoading = true
+        followingsRetryTask?.cancel()
+        followingsRetryTask = nil
+        let generation = followingsGeneration
+        let page = followingsPage + 1
+        Task {
+            do {
+                let next = try await WebRequest.requestFollowing(page: page)
+                guard generation == followingsGeneration else { return }
+                followingsLoading = false
+                followingsPage = page
+                // 只有成功拿到空页才算到底
+                followingsFinished = next.isEmpty
+                let base = page == 1 ? [] : followings
+                let known = Set(base.map(\.mid))
+                followings = base + next.filter { !known.contains($0.mid) }
+                headerView?.update(users: followings, selectedMid: selectedMid)
+            } catch {
+                guard generation == followingsGeneration else { return }
+                followingsLoading = false
+                // 失败不标记到底：稍后自动重试一次；之后横排滚到末尾或页面刷新时也会再试
+                scheduleFollowingsRetry()
+            }
+        }
+    }
+
+    private func scheduleFollowingsRetry() {
+        followingsRetryTask?.cancel()
+        followingsRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10 * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.loadMoreFollowings()
+        }
+    }
+
+    /// 显式刷新（首次加载、下拉/Tab 重选刷新）：视频和顶部关注列表一起重新拉取，
+    /// 关注或取关的变化会反映到 UP 主横排里。切换筛选走 select(mid:)，不刷新关注列表。
+    override func reloadData() {
+        super.reloadData()
+        loadMoreFollowings(replacing: true)
     }
 }
 
@@ -323,11 +503,12 @@ struct DynamicFeedData: Codable, PlayableData, DisplayData {
         var leftItems = [DisplayOverlay.DisplayOverlayItem]()
         var rightItems = [DisplayOverlay.DisplayOverlayItem]()
         if let stat = modules.module_dynamic.major?.archive?.stat {
-            if let play = stat.play {
-                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play == "0" ? "-" : "\(play)"))
+            // 没有数据（0 或「-」）时不显示该项，避免出现孤零零的「-」
+            if let play = stat.play, play != "0", play != "-" {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play))
             }
-            if let danmaku = stat.danmaku {
-                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku == "0" ? "-" : "\(danmaku)"))
+            if let danmaku = stat.danmaku, danmaku != "0", danmaku != "-" {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku))
             }
         }
         if let durationText = modules.module_dynamic.major?.archive?.duration_text {
