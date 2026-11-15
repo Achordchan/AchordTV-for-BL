@@ -81,8 +81,8 @@ class UpSpaceTitleSupplementaryView: UICollectionReusableView {
             make.height.equalTo(80)
         }
 
-        nameLabel.font = UIFont.systemFont(ofSize: 30, weight: .semibold)
-        despLabel.font = UIFont.systemFont(ofSize: 23, weight: .regular)
+        nameLabel.font = BLFont.cardTitleLarge
+        despLabel.font = BLFont.subtitle
         despLabel.textColor = UIColor(named: "titleColor")
         despLabel.numberOfLines = 2
 

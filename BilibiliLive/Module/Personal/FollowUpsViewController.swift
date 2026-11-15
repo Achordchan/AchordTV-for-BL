@@ -118,8 +118,14 @@ class UpCell: BLMotionCollectionViewCell {
     let nameLabel = MarqueeLabel()
     let despLabel = UILabel()
 
+    private let glassView = BLGlass.makeView(cornerRadius: 16)
+
     override func setup() {
         super.setup()
+        contentView.addSubview(glassView)
+        glassView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
         contentView.addSubview(imageView)
         contentView.addSubview(nameLabel)
         contentView.addSubview(despLabel)
@@ -144,12 +150,11 @@ class UpCell: BLMotionCollectionViewCell {
             make.trailing.equalTo(nameLabel.snp.trailing).offset(-20)
         }
 
-        nameLabel.font = UIFont.systemFont(ofSize: 30, weight: .semibold)
+        nameLabel.font = BLFont.cardTitleLarge
         nameLabel.fadeLength = 60
-        despLabel.font = UIFont.systemFont(ofSize: 20, weight: .regular)
-        despLabel.textColor = UIColor(named: "titleColor")
-        contentView.backgroundColor = UIColor(named: "bgColor")
-        contentView.layer.cornerRadius = 16
+        despLabel.font = BLFont.subtitle
+        nameLabel.textColor = BLGlass.Color.text
+        despLabel.textColor = BLGlass.Color.secondaryText
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -159,6 +164,19 @@ class UpCell: BLMotionCollectionViewCell {
         } else {
             stopScroll()
         }
+        coordinator.addCoordinatedAnimations {
+            self.updateAppearance()
+        }
+    }
+
+    /// 聚焦时与全局一致：系统白底 + 深色文字
+    private func updateAppearance() {
+        glassView.isHidden = isFocused
+        contentView.backgroundColor = isFocused ? BLGlass.Color.focusedFill : .clear
+        contentView.layer.cornerRadius = 16
+        contentView.layer.cornerCurve = .continuous
+        nameLabel.textColor = isFocused ? BLGlass.Color.focusedText : BLGlass.Color.text
+        despLabel.textColor = isFocused ? UIColor(white: 0, alpha: 0.6) : BLGlass.Color.secondaryText
     }
 
     private func startScroll() {

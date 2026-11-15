@@ -25,10 +25,18 @@ class TabBarCustomizationViewController: UIViewController {
 
     // MARK: - Views
 
+    private let pageTitleLabel: UILabel = {
+        let label = UILabel()
+        label.text = "导航栏排序"
+        label.font = BLFont.pageTitle
+        label.textColor = BLGlass.Color.text
+        return label
+    }()
+
     private let hintLabel: UILabel = {
         let label = UILabel()
-        label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = UIColor.white
+        label.font = BLFont.body
+        label.textColor = BLGlass.Color.secondaryText
         return label
     }()
 
@@ -62,17 +70,17 @@ class TabBarCustomizationViewController: UIViewController {
     }
 
     private func makeSection(environment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
-        let itemSize = NSCollectionLayoutSize(widthDimension: .absolute(200),
+        let itemSize = NSCollectionLayoutSize(widthDimension: .absolute(196),
                                               heightDimension: .absolute(120))
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
 
-        let groupSize = NSCollectionLayoutSize(widthDimension: .estimated(200),
+        let groupSize = NSCollectionLayoutSize(widthDimension: .estimated(196),
                                                heightDimension: .absolute(120))
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
 
         let section = NSCollectionLayoutSection(group: group)
         section.orthogonalScrollingBehavior = .continuous
-        section.interGroupSpacing = 30
+        section.interGroupSpacing = 24
         section.contentInsets = NSDirectionalEdgeInsets(top: 20, leading: 0, bottom: 30, trailing: 40)
 
         let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0),
@@ -88,8 +96,13 @@ class TabBarCustomizationViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "选中项目后按播放键开始排序"
-        view.backgroundColor = .black
+        // 自带深色模糊底，浅色外观下也保持深底白字
+        view.backgroundColor = .clear
+        let backdrop = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+        view.addSubview(backdrop)
+        backdrop.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
 
         setupUI()
         reloadPlacementsFromSettings()
@@ -192,13 +205,19 @@ class TabBarCustomizationViewController: UIViewController {
     // MARK: - UI helpers
 
     private func setupUI() {
+        view.addSubview(pageTitleLabel)
         view.addSubview(hintLabel)
         view.addSubview(restoreDefaultButton)
         view.addSubview(collectionView)
         restoreDefaultButton.addTarget(self, action: #selector(didTapRestoreDefault), for: .primaryActionTriggered)
 
-        hintLabel.snp.makeConstraints { make in
+        pageTitleLabel.snp.makeConstraints { make in
             make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(12)
+            make.leading.equalToSuperview().offset(80)
+        }
+
+        hintLabel.snp.makeConstraints { make in
+            make.top.equalTo(pageTitleLabel.snp.bottom).offset(12)
             make.leading.equalToSuperview().offset(80)
             make.trailing.lessThanOrEqualTo(restoreDefaultButton.snp.leading).offset(-24)
         }
@@ -220,7 +239,7 @@ class TabBarCustomizationViewController: UIViewController {
         }
 
         collectionView.snp.makeConstraints { make in
-            make.top.equalTo(hintLabel.snp.bottom).offset(12)
+            make.top.equalTo(hintLabel.snp.bottom).offset(40)
             make.top.greaterThanOrEqualTo(restoreDefaultButton.snp.bottom).offset(12)
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
             make.leading.equalToSuperview().offset(80)
@@ -230,8 +249,8 @@ class TabBarCustomizationViewController: UIViewController {
 
     private func updateHintLabel() {
         hintLabel.text = editingPage != nil
-            ? "排序中：左右移动排序，上下跨区移动；按确认键或播放键完成"
-            : "选中项目后按播放键开始排序"
+            ? "移动中：左右调整顺序，上下移到另一栏，再按一次确认键完成"
+            : "选中一项后按确认键开始移动，导航栏里最左边的页面会作为启动后的首页"
     }
 
     private func commitIfNeeded() {
@@ -419,10 +438,16 @@ class TabBarTileCell: BLMotionCollectionViewCell {
         }
     }
 
+    private let glassView = BLGlass.makeView(cornerRadius: 16)
+
     private func setupView() {
         contentView.layer.cornerRadius = 16
         contentView.layer.cornerCurve = .continuous
         contentView.clipsToBounds = true
+        contentView.addSubview(glassView)
+        glassView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
 
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOffset = CGSize(width: 0, height: 8)
@@ -447,13 +472,14 @@ class TabBarTileCell: BLMotionCollectionViewCell {
     }
 
     private func updateAppearance() {
+        glassView.isHidden = isFocused
         if isFocused {
-            contentView.backgroundColor = .white
-            titleLabel.textColor = .black
+            contentView.backgroundColor = BLGlass.Color.focusedFill
+            titleLabel.textColor = BLGlass.Color.focusedText
             layer.shadowOpacity = 0.3
         } else {
-            contentView.backgroundColor = UIColor(white: 0.15, alpha: 1)
-            titleLabel.textColor = .white
+            contentView.backgroundColor = isBeingEdited ? BLGlass.Color.selectedFill : .clear
+            titleLabel.textColor = BLGlass.Color.text
             layer.shadowOpacity = 0
         }
     }
@@ -466,8 +492,8 @@ class TabBarSectionHeaderView: UICollectionReusableView {
 
     let label: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: 30, weight: .bold)
-        l.textColor = .white
+        l.font = BLFont.groupLabel
+        l.textColor = BLGlass.Color.secondaryText
         return l
     }()
 

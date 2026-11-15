@@ -120,8 +120,25 @@ class VideoDetailViewController: UIViewController {
         return vc
     }
 
+    /// 故事板里的字号统一换成 BLFont 规则
+    private func applyTypography() {
+        titleLabel.font = BLFont.pageTitle
+        ugcLabel.font = BLFont.sectionTitle
+        let sectionTitles: Set<String> = ["视频选集", "合集", "推荐视频", "热门评论"]
+        func walk(_ view: UIView) {
+            for sub in view.subviews {
+                if let label = sub as? UILabel, let text = label.text, sectionTitles.contains(text) {
+                    label.font = BLFont.sectionTitle
+                }
+                walk(sub)
+            }
+        }
+        walk(view)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        applyTypography()
 
         pageCollectionView.register(BLTextOnlyCollectionViewCell.self, forCellWithReuseIdentifier: String(describing: BLTextOnlyCollectionViewCell.self))
         pageCollectionView.collectionViewLayout = makePageCollectionViewLayout()
@@ -763,7 +780,7 @@ class RelatedVideoCell: BLMotionCollectionViewCell {
             make.top.equalTo(imageView.snp.bottom).offset(6)
         }
         titleLabel.setContentHuggingPriority(.required, for: .vertical)
-        titleLabel.font = UIFont.systemFont(ofSize: 28)
+        titleLabel.font = BLFont.cardTitle
         titleLabel.fadeLength = 60
         stopScroll()
     }
@@ -905,7 +922,7 @@ class ContentDetailViewController: UIViewController {
         super.viewDidLoad()
         view.addSubview(titleLabel)
         view.addSubview(contentTextView)
-        titleLabel.font = UIFont.systemFont(ofSize: 60, weight: .semibold)
+        titleLabel.font = BLFont.pageTitle
         titleLabel.snp.makeConstraints { make in
             make.top.equalToSuperview().offset(80)
             make.centerX.equalToSuperview()

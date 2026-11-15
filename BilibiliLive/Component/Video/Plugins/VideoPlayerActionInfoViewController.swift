@@ -17,7 +17,7 @@ final class VideoPlayerInfoActionCell: BLMotionCollectionViewCell {
         let isOn: Bool
     }
 
-    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+    private let blurView = BLGlass.makeView(cornerRadius: 18)
     private let focusedBackgroundView = UIView()
     private let imageView = UIImageView()
     private let titleLabel = UILabel()

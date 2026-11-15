@@ -7,7 +7,7 @@ final class AccountSwitcherViewController: UIViewController {
         case actions
     }
 
-    private let containerView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+    private let containerView = BLGlass.makeView(cornerRadius: 36)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let closeButton = UIButton(type: .system)
@@ -32,7 +32,7 @@ final class AccountSwitcherViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.45)
         setupContainer()
         setupHeader()
         setupCollectionView()
@@ -52,8 +52,6 @@ final class AccountSwitcherViewController: UIViewController {
     }
 
     private func setupContainer() {
-        containerView.clipsToBounds = true
-        containerView.layer.cornerRadius = 36
         containerView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(containerView)
         NSLayoutConstraint.activate([
@@ -67,12 +65,12 @@ final class AccountSwitcherViewController: UIViewController {
     private func setupHeader() {
         let contentView = containerView.contentView
         titleLabel.text = "账号管理"
-        titleLabel.font = UIFont.systemFont(ofSize: 48, weight: .semibold)
+        titleLabel.font = BLFont.pageTitle
         titleLabel.textColor = .white
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         subtitleLabel.text = "快速切换登录账号或添加新的账号"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 26, weight: .regular)
+        subtitleLabel.font = BLFont.body
         subtitleLabel.textColor = UIColor.white.withAlphaComponent(0.8)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 

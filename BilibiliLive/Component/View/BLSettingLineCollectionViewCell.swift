@@ -7,10 +7,19 @@
 
 import UIKit
 
+/// 侧边栏菜单行：玻璃底板；当前选中项提亮并加粗，聚焦时为系统白底。
+/// 可选左侧 SF Symbol 图标；`isDestructive` 用于登出这类危险操作。
 class BLSettingLineCollectionViewCell: BLMotionCollectionViewCell {
-    let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .light))
+    let effectView = BLGlass.makeView(cornerRadius: 16)
     let selectedWhiteView = UIView()
     let titleLabel = UILabel()
+    private let iconView = UIImageView()
+    private let stackView = UIStackView()
+
+    var isDestructive = false {
+        didSet { updateView() }
+    }
+
     override var isSelected: Bool {
         didSet {
             updateView()
@@ -24,33 +33,73 @@ class BLSettingLineCollectionViewCell: BLMotionCollectionViewCell {
         effectView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        effectView.layer.cornerRadius = 10
-        effectView.layer.cornerCurve = .continuous
-        effectView.clipsToBounds = true
-        selectedWhiteView.backgroundColor = UIColor.white
-        selectedWhiteView.isHidden = !isFocused
+        selectedWhiteView.isHidden = true
         effectView.contentView.addSubview(selectedWhiteView)
         selectedWhiteView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        effectView.contentView.addSubview(titleLabel)
-        titleLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(26)
-            make.trailing.equalToSuperview().offset(20)
+
+        iconView.contentMode = .scaleAspectFit
+        iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+        iconView.isHidden = true
+        iconView.snp.makeConstraints { make in
+            make.width.equalTo(36)
+        }
+
+        stackView.axis = .horizontal
+        stackView.alignment = .center
+        stackView.spacing = 18
+        stackView.addArrangedSubview(iconView)
+        stackView.addArrangedSubview(titleLabel)
+        effectView.contentView.addSubview(stackView)
+        stackView.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(28)
+            make.trailing.lessThanOrEqualToSuperview().offset(-20)
             make.top.bottom.equalToSuperview().inset(8)
         }
         titleLabel.textAlignment = .left
-        titleLabel.font = UIFont.systemFont(ofSize: 40, weight: .regular)
-        titleLabel.textColor = .black
+        updateView()
+    }
+
+    /// 设置标题与可选图标（SF Symbol 名称）
+    func configure(title: String, icon: String? = nil, destructive: Bool = false) {
+        titleLabel.text = title
+        iconView.image = icon.flatMap { UIImage(systemName: $0) }
+        iconView.isHidden = icon == nil
+        isDestructive = destructive
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        configure(title: "")
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        updateView()
+        coordinator.addCoordinatedAnimations {
+            self.updateView()
+        }
     }
 
     func updateView() {
-        selectedWhiteView.isHidden = !(isFocused || isSelected)
+        let textColor: UIColor
+        if isFocused {
+            selectedWhiteView.isHidden = false
+            selectedWhiteView.backgroundColor = BLGlass.Color.focusedFill
+            textColor = isDestructive ? BLGlass.Color.destructiveOnLight : BLGlass.Color.focusedText
+            titleLabel.font = BLFont.listItemEmphasized
+        } else if isSelected {
+            selectedWhiteView.isHidden = false
+            selectedWhiteView.backgroundColor = BLGlass.Color.selectedFill
+            textColor = BLGlass.Color.text
+            titleLabel.font = BLFont.listItemEmphasized
+        } else {
+            selectedWhiteView.isHidden = true
+            textColor = isDestructive ? BLGlass.Color.destructive : BLGlass.Color.secondaryText
+            titleLabel.font = BLFont.listItem
+        }
+        titleLabel.textColor = textColor
+        iconView.tintColor = textColor
     }
 
     static func makeLayout() -> UICollectionViewLayout {
