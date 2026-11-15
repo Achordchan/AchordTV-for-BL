@@ -16,36 +16,38 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: 'latest-stable'
+
+      # 侧载工具靠版本号判断是否有更新：每次发布都递增
+      # 1.0.0（build 100）是首个手动发布的版本，自动发布从 1.0.<run_number>（build 100+run_number）开始
+      - name: Set version
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          BUILD="$((100 + ${{ github.run_number }}))"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $VERSION" \
+            -c "Set :CFBundleVersion $BUILD" \
+            "BilibiliLive/Supporting Files/Info.plist"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Build
         run: |
           fastlane build_unsign_ipa
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BilbiliAtvDemo.ipa
-          path: BilbiliAtvDemo.ipa
+          name: AchordTV.ipa
+          path: AchordTV.ipa
 
-      # - name: List, filter and delete artifacts
-      #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      #   uses: actions/github-script@v6
-      #   id: artifact
-      #   with:
-      #     script: |
-      #       const { owner, repo } = context.issue
-            
-      #       const res = await github.rest.actions.listArtifactsForRepo({
-      #         owner,
-      #         repo,
-      #       })
-            
-      #       res.data.artifacts
-      #         .forEach(({ id }) => { github.rest.actions.deleteArtifact({ owner, repo, artifact_id: id, }) })
-
-      - name: Delete GitHub release if exist then create release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.event.repository.fork == false
+      # 只在本仓库发布（本仓库在 GitHub 上仍登记为 fork，不能用 repository.fork 判断）。
+      # 发布为正式版并标记为 Latest，资产名固定 AchordTV.ipa，供侧载工具获取与自动更新。
+      - name: Create GitHub release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'Achordchan/AchordTV-for-BL'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mv BilbiliAtvDemo.ipa BilbiliAtvDemo-unsigned.ipa
-          gh release view "nightly" && gh release delete "nightly" -y --cleanup-tag
-          gh release create "nightly" BilbiliAtvDemo-unsigned.ipa -t "Nightly" -p
+          gh release create "v$VERSION" AchordTV.ipa \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --title "AchordTV for BL $VERSION" \
+            --notes "自动构建：$(git log -1 --pretty=%s)（$(git rev-parse --short HEAD)）。未签名 IPA，请用侧载工具签名安装。"
