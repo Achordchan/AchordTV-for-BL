@@ -88,16 +88,102 @@ final class FollowsViewController: UIViewController, BLTabBarContentVCProtocol {
     }
 }
 
-final class FollowsGridViewController: StandardVideoCollectionViewController<DynamicFeedData> {
+/// 关注页网格里的一条视频：默认来自关注动态；选中某个 UP 主后来自该 UP 主的投稿列表
+enum FollowsVideo: PlayableData {
+    case dynamic(DynamicFeedData)
+    case space(ApiRequest.UpSpaceListData, face: URL?, name: String)
+
+    private var base: any PlayableData {
+        switch self {
+        case let .dynamic(data): return data
+        case let .space(data, _, _): return data
+        }
+    }
+
+    var aid: Int { base.aid }
+    var cid: Int { base.cid }
+    var title: String { base.title }
+    var ownerName: String {
+        if case let .space(data, _, name) = self, data.author.isEmpty {
+            return name
+        }
+        return base.ownerName
+    }
+
+    var pic: URL? { base.pic }
+    var date: String? { base.date }
+    var overlay: DisplayOverlay? { base.overlay }
+    var avatar: URL? {
+        switch self {
+        case let .dynamic(data): return data.avatar
+        case let .space(_, face, _): return face
+        }
+    }
+}
+
+final class FollowsGridViewController: StandardVideoCollectionViewController<FollowsVideo> {
     var lastOffset = ""
     private var nextSourcePage = 1
+    private var spaceLastAid: Int?
+
+    /// 顶部 UP 主横排
+    private var followings = [WebRequest.FollowingUser]()
+    private var followingsPage = 0
+    private var followingsFinished = false
+    private var followingsLoading = false
+    /// 当前选中的 UP 主；nil 表示「全部」
+    private var selectedMid: Int?
+    private var pendingReload = false
+    private weak var headerView: FollowUpsBarHeaderView?
 
     override func setupCollectionView() {
         super.setupCollectionView()
         collectionVC.pageSize = 1
+        collectionVC.showHeader = true
+        collectionVC.customHeaderConfig = FeedHeaderConfig(viewType: FollowUpsBarHeaderView.self,
+                                                           estimatedHeight: 180)
+        { [weak self] header, _ in
+            guard let self else { return }
+            self.headerView = header
+            header.leadingInset = Settings.displayStyle == .large ? 35 : 30
+            header.onSelect = { [weak self] mid in
+                self?.select(mid: mid)
+            }
+            header.onReachEnd = { [weak self] in
+                self?.loadMoreFollowings()
+            }
+            header.update(users: self.followings, selectedMid: self.selectedMid)
+        }
     }
 
-    override func request(page: Int) async throws -> [DynamicFeedData] {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        loadMoreFollowings()
+    }
+
+    override func reallyReloadData() async {
+        // 切换 UP 主时可能正在加载，记下来等这次加载结束后再按新的选择重载一次
+        if reloading {
+            pendingReload = true
+            return
+        }
+        repeat {
+            pendingReload = false
+            await super.reallyReloadData()
+        } while pendingReload
+    }
+
+    override func request(page: Int) async throws -> [FollowsVideo] {
+        if let mid = selectedMid {
+            if page == 1 { spaceLastAid = nil }
+            let user = followings.first { $0.mid == mid }
+            let res = try await ApiRequest.requestUpSpaceVideo(mid: mid, lastAid: spaceLastAid)
+            // 加载期间已切换到别的 UP 主，丢弃这次结果
+            guard selectedMid == mid else { return [] }
+            spaceLastAid = res.last?.aid
+            return res.map { .space($0, face: user?.face, name: user?.uname ?? "") }
+        }
+
         if page == 1 {
             lastOffset = ""
             nextSourcePage = 1
@@ -108,20 +194,53 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Dyn
             let requestedOffset = lastOffset
             let info = try await WebRequest.requestFollowsFeed(offset: requestedOffset, page: nextSourcePage)
             try Task.checkCancellation()
+            guard selectedMid == nil else { return [] }
             nextSourcePage += 1
             lastOffset = info.offset
             Logger.debug("request page\(nextSourcePage - 1) get count:\(info.videoFeeds.count) next offset:\(info.offset)")
             if !info.videoFeeds.isEmpty || !info.has_more || info.offset == requestedOffset {
-                return info.videoFeeds
+                return info.videoFeeds.map { .dynamic($0) }
             }
         }
         return []
     }
 
-    override func goDetail(with feed: DynamicFeedData) {
-        let epid = feed.modules.module_dynamic.major?.pgc?.epid
-        let detailVC = VideoDetailViewController.create(aid: feed.aid, cid: feed.cid, epid: epid)
+    override func goDetail(with record: FollowsVideo) {
+        let epid: Int?
+        if case let .dynamic(feed) = record {
+            epid = feed.modules.module_dynamic.major?.pgc?.epid
+        } else {
+            epid = nil
+        }
+        let detailVC = VideoDetailViewController.create(aid: record.aid, cid: record.cid, epid: epid)
         detailVC.present(from: self)
+    }
+
+    // MARK: - UP 主横排
+
+    private func select(mid: Int?) {
+        guard selectedMid != mid else { return }
+        selectedMid = mid
+        headerView?.update(users: followings, selectedMid: mid)
+        reloadData()
+    }
+
+    private func loadMoreFollowings() {
+        guard !followingsLoading, !followingsFinished else { return }
+        followingsLoading = true
+        Task {
+            defer { followingsLoading = false }
+            do {
+                let next = try await WebRequest.requestFollowing(page: followingsPage + 1)
+                followingsPage += 1
+                followingsFinished = next.isEmpty
+                let known = Set(followings.map(\.mid))
+                followings.append(contentsOf: next.filter { !known.contains($0.mid) })
+                headerView?.update(users: followings, selectedMid: selectedMid)
+            } catch {
+                followingsFinished = true
+            }
+        }
     }
 }
 
@@ -323,11 +442,12 @@ struct DynamicFeedData: Codable, PlayableData, DisplayData {
         var leftItems = [DisplayOverlay.DisplayOverlayItem]()
         var rightItems = [DisplayOverlay.DisplayOverlayItem]()
         if let stat = modules.module_dynamic.major?.archive?.stat {
-            if let play = stat.play {
-                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play == "0" ? "-" : "\(play)"))
+            // 没有数据（0 或「-」）时不显示该项，避免出现孤零零的「-」
+            if let play = stat.play, play != "0", play != "-" {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: play))
             }
-            if let danmaku = stat.danmaku {
-                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku == "0" ? "-" : "\(danmaku)"))
+            if let danmaku = stat.danmaku, danmaku != "0", danmaku != "-" {
+                leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: danmaku))
             }
         }
         if let durationText = modules.module_dynamic.major?.archive?.duration_text {

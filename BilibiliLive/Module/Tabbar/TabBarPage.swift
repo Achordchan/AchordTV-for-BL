@@ -72,7 +72,9 @@ enum TabBarPage: String, CaseIterable, Codable {
         [.live, .feed, .hot, .ranking, .follows, .favorite, .personal, .search]
     }
 
+    /// 「关注UP」已并入「关注」页顶部的 UP 主横排，不再单独作为页面出现；
+    /// 枚举值保留，保证旧的页面排序配置仍能正常解码（解码后会被标准化逻辑移除）
     static var allConfigurablePages: [TabBarPage] {
-        return allCases
+        allCases.filter { $0 != .followUps }
     }
 }
