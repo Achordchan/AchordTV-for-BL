@@ -476,16 +476,51 @@ enum ApiRequest {
         }
     }
 
+    /// UP 主投稿的一段结果。`videos` 只含能解析的条目，翻页信息按原始条目计算，
+    /// 不会因为跳过了个别条目而误判已经到底。
+    struct UpSpacePage {
+        let videos: [UpSpaceListData]
+        /// 下一页游标：原始最后一条的 aid（即使那条解析失败被跳过）
+        let nextAid: Int?
+        let hasMore: Bool
+    }
+
+    /// 只取单页（不翻页的场景用，如播放页里的「UP 主其他视频」）
     static func requestUpSpaceVideo(mid: Int, lastAid: Int?, pageSize: Int = 20, order: String = "pubdate") async throws -> [UpSpaceListData] {
-        /// 单条解析失败（非普通投稿等）时跳过该条，不让整页失败
+        try await requestUpSpaceVideoPage(mid: mid, lastAid: lastAid, pageSize: pageSize, order: order).videos
+    }
+
+    /// 翻页列表用：连续拉取，直到凑够 `minCount` 条可用视频或已经没有更多。
+    /// 列表靠返回条数判断是否到底，跳过的条目不能让一页「变短」。最多连拉 `maxPages` 页。
+    static func requestUpSpaceVideos(mid: Int, lastAid: Int?, minCount: Int = 20, order: String = "pubdate", maxPages: Int = 5) async throws -> UpSpacePage {
+        var videos = [UpSpaceListData]()
+        var cursor = lastAid
+        var hasMore = true
+        for _ in 0..<maxPages {
+            try Task.checkCancellation()
+            let page = try await requestUpSpaceVideoPage(mid: mid, lastAid: cursor, order: order)
+            videos.append(contentsOf: page.videos)
+            cursor = page.nextAid
+            hasMore = page.hasMore
+            if videos.count >= minCount || !hasMore { break }
+        }
+        return UpSpacePage(videos: videos, nextAid: cursor, hasMore: hasMore)
+    }
+
+    static func requestUpSpaceVideoPage(mid: Int, lastAid: Int?, pageSize: Int = 20, order: String = "pubdate") async throws -> UpSpacePage {
+        /// 单条解析失败（非普通投稿等）时跳过该条，不让整页失败；但仍记下它的 aid 作为翻页游标
         struct LossyItem: Decodable {
             let value: UpSpaceListData?
+            let param: String?
+            enum CodingKeys: String, CodingKey { case param }
             init(from decoder: Decoder) throws {
                 value = try? UpSpaceListData(from: decoder)
+                param = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(String.self, forKey: .param)
             }
         }
         struct Resp: Decodable {
             let item: [LossyItem]
+            let has_next: Bool?
         }
 
         var param: Parameters = ["vmid": mid, "ps": pageSize, "actionKey": "appkey", "disable_rcmd": 0, "fnval": 976, "fnver": 0, "force_host": 0, "fourk": 1, "order": order, "player_net": 1, "qn": 120]
@@ -493,6 +528,9 @@ enum ApiRequest {
             param["aid"] = lastAid
         }
         let resp: Resp = try await request("https://app.bilibili.com/x/v2/space/archive/cursor", parameters: param)
-        return resp.item.compactMap(\.value)
+        let nextAid = resp.item.last?.param.flatMap { Int($0) }
+        // 接口有 has_next 就以它为准，没有时按原始条数是否满一页判断
+        let hasMore = (resp.has_next ?? (resp.item.count >= pageSize)) && nextAid != nil
+        return UpSpacePage(videos: resp.item.compactMap(\.value), nextAid: nextAid, hasMore: hasMore)
     }
 }

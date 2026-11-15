@@ -125,12 +125,17 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     var lastOffset = ""
     private var nextSourcePage = 1
     private var spaceLastAid: Int?
+    private var spaceHasMore = true
+    /// 每次切换 UP 主加一；请求返回时代数变了说明结果已过期，直接丢弃（抛 CancellationError，
+    /// 基类不会据此追加数据或翻页，也不会弹错误）
+    private var selectionGeneration = 0
 
     /// 顶部 UP 主横排
     private var followings = [WebRequest.FollowingUser]()
     private var followingsPage = 0
     private var followingsFinished = false
     private var followingsLoading = false
+    private var followingsRetryTask: Task<Void, Never>?
     /// 当前选中的 UP 主；nil 表示「全部」
     private var selectedMid: Int?
     private var pendingReload = false
@@ -174,14 +179,20 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     }
 
     override func request(page: Int) async throws -> [FollowsVideo] {
+        let generation = selectionGeneration
         if let mid = selectedMid {
-            if page == 1 { spaceLastAid = nil }
+            if page == 1 {
+                spaceLastAid = nil
+                spaceHasMore = true
+            }
+            guard spaceHasMore else { return [] }
             let user = followings.first { $0.mid == mid }
-            let res = try await ApiRequest.requestUpSpaceVideo(mid: mid, lastAid: spaceLastAid)
-            // 加载期间已切换到别的 UP 主，丢弃这次结果
-            guard selectedMid == mid else { return [] }
-            spaceLastAid = res.last?.aid
-            return res.map { .space($0, face: user?.face, name: user?.uname ?? "") }
+            let res = try await ApiRequest.requestUpSpaceVideos(mid: mid, lastAid: spaceLastAid)
+            // 加载期间已切换过 UP 主，丢弃这次结果，不能动当前列表的翻页状态
+            guard generation == selectionGeneration else { throw CancellationError() }
+            spaceLastAid = res.nextAid
+            spaceHasMore = res.hasMore
+            return res.videos.map { .space($0, face: user?.face, name: user?.uname ?? "") }
         }
 
         if page == 1 {
@@ -194,7 +205,7 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
             let requestedOffset = lastOffset
             let info = try await WebRequest.requestFollowsFeed(offset: requestedOffset, page: nextSourcePage)
             try Task.checkCancellation()
-            guard selectedMid == nil else { return [] }
+            guard generation == selectionGeneration else { throw CancellationError() }
             nextSourcePage += 1
             lastOffset = info.offset
             Logger.debug("request page\(nextSourcePage - 1) get count:\(info.videoFeeds.count) next offset:\(info.offset)")
@@ -221,6 +232,7 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     private func select(mid: Int?) {
         guard selectedMid != mid else { return }
         selectedMid = mid
+        selectionGeneration += 1
         headerView?.update(users: followings, selectedMid: mid)
         reloadData()
     }
@@ -228,18 +240,39 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     private func loadMoreFollowings() {
         guard !followingsLoading, !followingsFinished else { return }
         followingsLoading = true
+        followingsRetryTask?.cancel()
+        followingsRetryTask = nil
         Task {
             defer { followingsLoading = false }
             do {
                 let next = try await WebRequest.requestFollowing(page: followingsPage + 1)
                 followingsPage += 1
+                // 只有成功拿到空页才算到底
                 followingsFinished = next.isEmpty
                 let known = Set(followings.map(\.mid))
                 followings.append(contentsOf: next.filter { !known.contains($0.mid) })
                 headerView?.update(users: followings, selectedMid: selectedMid)
             } catch {
-                followingsFinished = true
+                // 失败不标记到底：稍后自动重试一次；之后横排滚到末尾或页面刷新时也会再试
+                scheduleFollowingsRetry()
             }
+        }
+    }
+
+    private func scheduleFollowingsRetry() {
+        followingsRetryTask?.cancel()
+        followingsRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10 * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.loadMoreFollowings()
+        }
+    }
+
+    override func reloadData() {
+        super.reloadData()
+        // 关注列表之前加载失败、还是空的，刷新时顺便重试
+        if followings.isEmpty {
+            loadMoreFollowings()
         }
     }
 }

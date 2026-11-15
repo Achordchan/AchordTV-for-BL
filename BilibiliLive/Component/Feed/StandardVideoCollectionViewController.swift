@@ -90,6 +90,8 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
             let res = try await request(page: 1)
             collectionVC.displayDatas = []
             collectionVC.appendData(displayData: res)
+        } catch is CancellationError {
+            // 子类判定结果已过期（例如加载期间切换了筛选），不更新列表也不提示
         } catch let err {
             let alert = UIAlertController(title: "Error", message: "\(err)", preferredStyle: .alert)
             alert.addAction(.init(title: "Ok", style: .cancel))
