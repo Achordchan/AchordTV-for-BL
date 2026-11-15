@@ -52,14 +52,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 兜底：若已存在更高版本（例如有构建被手动重跑），本次照常发布但不抢占 Latest
+          TAG="v$VERSION"
+          # 重跑已发布过的构建时 run_number 不变：同名 Release 已存在，只覆盖上传安装包，不新建、不改动 Latest
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG 已存在，覆盖上传 AchordTV.ipa"
+            gh release upload "$TAG" AchordTV.ipa --clobber
+            exit 0
+          fi
+          # 兜底：若已存在更高版本，本次照常发布但不抢占 Latest
           LATEST="$(gh release view --json tagName --jq .tagName 2>/dev/null | sed 's/^v//' || true)"
           LATEST_FLAG="--latest"
           if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]; then
             echo "已有更高版本 $LATEST，本次 $VERSION 不标记为 Latest"
             LATEST_FLAG="--latest=false"
           fi
-          gh release create "v$VERSION" AchordTV.ipa \
+          gh release create "$TAG" AchordTV.ipa \
             --target "$GITHUB_SHA" \
             "$LATEST_FLAG" \
             --title "AchordTV for BL $VERSION" \
