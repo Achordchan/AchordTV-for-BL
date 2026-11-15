@@ -520,7 +520,22 @@ enum ApiRequest {
         }
         struct Resp: Decodable {
             let item: [LossyItem]
+            /// 接口的 has_next 可能是 0/1 数字，也可能是布尔值；都不是或缺失时为 nil
             let has_next: Bool?
+
+            enum CodingKeys: String, CodingKey { case item, has_next }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                item = try container.decode([LossyItem].self, forKey: .item)
+                if let flag = try? container.decodeIfPresent(Bool.self, forKey: .has_next) {
+                    has_next = flag
+                } else if let number = try? container.decodeIfPresent(Int.self, forKey: .has_next) {
+                    has_next = number != 0
+                } else {
+                    has_next = nil
+                }
+            }
         }
 
         var param: Parameters = ["vmid": mid, "ps": pageSize, "actionKey": "appkey", "disable_rcmd": 0, "fnval": 976, "fnver": 0, "force_host": 0, "fourk": 1, "order": order, "player_net": 1, "qn": 120]
