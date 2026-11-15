@@ -75,6 +75,7 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
             lastAid = nil
             hasMore = true
         }
+        guard hasMore else { return [] }
 
         async let infoTask = WebRequest.requestUpSpaceInfo(mid: mid)
         async let relationTask = WebRequest.requestUpSpaceRelation(mid: mid)
@@ -87,12 +88,12 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
             updateBlockedState()
         }
 
-        // If user is blocked, return empty array
+        // 已拉黑：没有可看的内容，标记到底，避免列表继续请求
         if relation?.is_blocked == true {
+            hasMore = false
             return []
         }
 
-        guard hasMore else { return [] }
         let res = try await ApiRequest.requestUpSpaceVideos(mid: mid, lastAid: lastAid, order: sortByPlayCount ? "click" : "pubdate")
         lastAid = res.nextAid
         hasMore = res.hasMore

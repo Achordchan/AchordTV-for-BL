@@ -190,8 +190,8 @@ class TabBarCustomizationViewController: UIViewController {
                 present(alert, animated: true)
                 return false
             }
-            if tabBarCount <= 3 {
-                let alert = UIAlertController(title: "导航栏至少保留 3 个页面", message: nil, preferredStyle: .alert)
+            if tabBarCount <= Settings.minimumTabBarPageCount {
+                let alert = UIAlertController(title: "导航栏至少保留 \(Settings.minimumTabBarPageCount) 个页面", message: nil, preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "知道了", style: .cancel))
                 present(alert, animated: true)
                 return false

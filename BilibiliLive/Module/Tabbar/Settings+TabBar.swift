@@ -76,12 +76,32 @@ extension Settings {
         return normalized
     }
 
+    /// 导航栏至少保留的页面数（与 Tab 自定义页的限制一致）
+    static let minimumTabBarPageCount = 3
+
+    /// 迁移已合并的旧页面：「关注UP」并入「关注」。
+    /// 合并后的「关注」取两者中更「显眼」的位置：只要有一个在导航栏，就放在导航栏里靠前的那个位置
+    /// （保留原来的启动页），否则放在靠前的那个位置。
+    private static func migrateLegacyPages(_ placements: [TabBarPagePlacement]) -> [TabBarPagePlacement] {
+        guard placements.contains(where: { $0.page == .followUps }) else { return placements }
+        let merged: Set<TabBarPage> = [.follows, .followUps]
+        let candidates = placements.indices.filter { merged.contains(placements[$0].page) }
+        guard let keep = candidates.first(where: { placements[$0].section == .tabBar }) ?? candidates.first else {
+            return placements
+        }
+        return placements.indices.compactMap { index in
+            let placement = placements[index]
+            guard merged.contains(placement.page) else { return placement }
+            return index == keep ? .init(page: .follows, section: placement.section) : nil
+        }
+    }
+
     // 标准化
     private static func normalize(_ placements: [TabBarPagePlacement]) -> [TabBarPagePlacement] {
         var result = [TabBarPagePlacement]()
         var used = Set<TabBarPage>()
 
-        for placement in placements {
+        for placement in migrateLegacyPages(placements) {
             guard TabBarPage.allConfigurablePages.contains(placement.page), !used.contains(placement.page) else { continue }
             let section: TabBarPageSection = placement.page.isFixedInTabBar ? .tabBar : placement.section
             result.append(.init(page: placement.page, section: section))
@@ -96,6 +116,13 @@ extension Settings {
         if !result.contains(where: { $0.page == .personal && $0.section == .tabBar }) {
             result.removeAll { $0.page == .personal }
             result.append(.init(page: .personal, section: .tabBar))
+        }
+
+        // 迁移合并页面后导航栏可能少于下限：按顺序把「我的页面」里的页面补回导航栏
+        var tabBarCount = result.filter { $0.section == .tabBar }.count
+        for index in result.indices where tabBarCount < minimumTabBarPageCount && result[index].section == .personal {
+            result[index].section = .tabBar
+            tabBarCount += 1
         }
 
         return result
