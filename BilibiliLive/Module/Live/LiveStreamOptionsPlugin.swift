@@ -45,7 +45,7 @@ final class LiveStreamOptionsPlugin: NSObject, CommonPlayerPlugin {
         if !qualities.isEmpty {
             let actions = qualities.map { option in
                 UIAction(title: option.name, state: option.qn == currentQn ? .on : .off) { [weak self] _ in
-                    guard option.qn != currentQn else { return }
+                    // 是否需要切换由 ViewModel 判断：选回正在播放的清晰度可以撤回尚未完成的切换
                     self?.onSelectQuality?(option.qn)
                 }
             }

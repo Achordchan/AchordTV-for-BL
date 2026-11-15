@@ -107,9 +107,25 @@ class LivePlayerViewModel {
         }
     }
 
-    /// 切换清晰度：按新的 qn 重新取流并从推荐线路开始播放。
-    /// 连续切换时只有最后一次生效：之前的任务被取消，迟到的响应在提交前被丢弃（见 initPlayer）。
+    /// 切换清晰度（在主线程调用）：按新的 qn 重新取流并从推荐线路开始播放。
+    /// 连续切换时只有最后一次生效：之前的任务被取消，迟到的响应和失败都会被丢弃（见 initPlayer）。
+    /// 切换尚未完成时选回正在播放的清晰度，等于撤回这次切换。
     func switchQuality(qn: Int) {
+        if qn == activePlayInfo?.current_qn {
+            guard pendingSwitchID != 0 else { return }
+            // 撤回尚未完成的切换：作废它的请求，保持当前播放
+            qualitySwitchTask?.cancel()
+            qualitySwitchTask = nil
+            pendingSwitchID = 0
+            streamGeneration += 1
+            requestedQn = qn
+            optionsPlugin?.reloadMenus()
+            return
+        }
+
+        switchCounter += 1
+        let switchID = switchCounter
+        pendingSwitchID = switchID
         requestedQn = qn
         retryCount = 0
         qualitySwitchTask?.cancel()
@@ -118,11 +134,16 @@ class LivePlayerViewModel {
                 try await initPlayer()
                 optionsPlugin?.reloadMenus()
             } catch is CancellationError {
-                // 被更新的切换取代
+                // 被更新的切换取代或已撤回
             } catch let err {
-                await MainActor.run {
-                    onError?(err.localizedDescription)
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        onError?(err.localizedDescription)
+                    }
                 }
+            }
+            await MainActor.run {
+                if pendingSwitchID == switchID { pendingSwitchID = 0 }
             }
         }
     }
@@ -184,6 +205,9 @@ class LivePlayerViewModel {
     private var qualityOptions = [LiveQualityOption]()
     private weak var optionsPlugin: LiveStreamOptionsPlugin?
     private var qualitySwitchTask: Task<Void, Never>?
+    /// 尚未完成的清晰度切换编号；0 表示没有
+    private var pendingSwitchID = 0
+    private var switchCounter = 0
     /// 每次取流加一；只有最新一次取流的结果会被提交和播放
     private var streamGeneration = 0
 
@@ -204,7 +228,15 @@ class LivePlayerViewModel {
             return (streamGeneration, requestedQn)
         }
 
-        let playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: qn)
+        let playUrl: WebRequest.LivePlayUrl
+        do {
+            playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: qn)
+        } catch {
+            // 请求期间已有更新的取流请求，或任务已取消：这次失败已无意义，不能报给用户
+            let superseded = await MainActor.run { generation != streamGeneration }
+            if superseded || Task.isCancelled { throw CancellationError() }
+            throw error
+        }
         let streams = playUrl.stream
 
         var infos = [LivePlayUrlInfo]()
