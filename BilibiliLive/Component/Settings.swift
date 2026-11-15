@@ -120,6 +120,10 @@ enum Settings {
     @UserDefault("Settings.followsFeedFlowEnabled", defaultValue: false)
     static var followsFeedFlowEnabled: Bool
 
+    /// 登录了两个及以上账号时，冷启动先显示账号选择页
+    @UserDefault("Settings.chooseAccountOnLaunch", defaultValue: true)
+    static var chooseAccountOnLaunch: Bool
+
     @UserDefaultCodable("Settings.SponsorBlockType", defaultValue: SponsorBlockType.none)
     static var enableSponsorBlock: SponsorBlockType
 

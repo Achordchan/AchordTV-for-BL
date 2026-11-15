@@ -120,6 +120,10 @@ class SettingsViewController: UIViewController {
                 }
 
                 Toggle(title: "热门个性化推荐", setting: Settings.requestHotWithoutCookie, onChange: Settings.requestHotWithoutCookie.toggle())
+
+                Toggle(title: "启动时选择账号",
+                       setting: Settings.chooseAccountOnLaunch,
+                       onChange: Settings.chooseAccountOnLaunch.toggle())
             }
 
             SectionModel(title: "界面") {
