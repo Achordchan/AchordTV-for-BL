@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 
 class BLTextOnlyCollectionViewCell: BLMotionCollectionViewCell {
-    private let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+    private let effectView = BLGlass.makeView(cornerRadius: 16)
     private let selectedWhiteView = UIView()
     let titleLabel = UILabel()
 
@@ -20,22 +20,29 @@ class BLTextOnlyCollectionViewCell: BLMotionCollectionViewCell {
         effectView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+        selectedWhiteView.backgroundColor = BLGlass.Color.focusedFill
+        selectedWhiteView.isHidden = true
+        effectView.contentView.addSubview(selectedWhiteView)
+        selectedWhiteView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
         effectView.contentView.addSubview(titleLabel)
         titleLabel.snp.makeConstraints { make in
             make.centerX.centerY.equalToSuperview()
             make.leading.trailing.equalToSuperview().inset(20)
             make.top.bottom.lessThanOrEqualToSuperview().inset(8)
         }
-        titleLabel.textColor = .white
+        titleLabel.textColor = BLGlass.Color.text
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 2
         titleLabel.font = UIFont.systemFont(ofSize: 26, weight: .medium)
-        effectView.layer.cornerRadius = 16
-        effectView.clipsToBounds = true
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        selectedWhiteView.isHidden = !isFocused
+        coordinator.addCoordinatedAnimations {
+            self.selectedWhiteView.isHidden = !self.isFocused
+            self.titleLabel.textColor = self.isFocused ? BLGlass.Color.focusedText : BLGlass.Color.text
+        }
     }
 }

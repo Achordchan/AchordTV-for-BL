@@ -7,6 +7,7 @@
 
 import Kingfisher
 import MarqueeLabel
+import SnapKit
 import TVUIKit
 import UIKit
 
@@ -20,6 +21,7 @@ class FeedCollectionViewCell: BLMotionCollectionViewCell {
     private let infoView = UIView()
     private let avatarView = UIImageView()
     private let overlayView = BLOverlayView()
+    private var avatarSizeConstraint: Constraint?
 
     override func setup() {
         super.setup()
@@ -47,51 +49,47 @@ class FeedCollectionViewCell: BLMotionCollectionViewCell {
         overlayView.layer.cornerRadius = imageView.layer.cornerRadius
         overlayView.clipsToBounds = true
 
+        // 信息区：封面下留 16pt 呼吸距离；标题独占一行，头像缩小后与 UP 主、日期并排放在第二行
         contentView.addSubview(infoView)
         infoView.snp.makeConstraints { make in
             make.leading.trailing.bottom.equalToSuperview()
-            make.top.equalTo(imageView.snp.bottom).offset(8)
+            make.top.equalTo(imageView.snp.bottom).offset(16)
         }
 
-        let hStackView = UIStackView()
-        let stackView = UIStackView()
-        infoView.addSubview(hStackView)
-        hStackView.addArrangedSubview(avatarView)
-        hStackView.addArrangedSubview(stackView)
-        hStackView.snp.makeConstraints { make in
+        infoView.addSubview(titleLabel)
+        titleLabel.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.bottom.equalToSuperview().priority(.high)
-            make.height.equalTo(stackView.snp.height)
         }
-
-        hStackView.alignment = .top
-        hStackView.spacing = 10
-        avatarView.backgroundColor = .clear
-        avatarView.snp.makeConstraints { make in
-            make.width.equalTo(avatarView.snp.height)
-            make.height.equalTo(stackView.snp.height).multipliedBy(0.7)
-        }
-        stackView.setContentHuggingPriority(.required, for: .vertical)
-        avatarView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        avatarView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        avatarView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        avatarView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        stackView.axis = .vertical
-        stackView.addArrangedSubview(titleLabel)
-        stackView.addArrangedSubview(upLabel)
-        stackView.alignment = .leading
-        stackView.spacing = 6
-        stackView.setContentHuggingPriority(.required, for: .vertical)
         titleLabel.holdScrolling = true
         titleLabel.setContentHuggingPriority(.required, for: .vertical)
         titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         titleLabel.fadeLength = 60
+
+        let metaStack = UIStackView(arrangedSubviews: [avatarView, upLabel])
+        metaStack.axis = .horizontal
+        metaStack.alignment = .center
+        metaStack.spacing = 10
+        infoView.addSubview(metaStack)
+        metaStack.snp.makeConstraints { make in
+            make.top.equalTo(titleLabel.snp.bottom).offset(8)
+            make.leading.equalToSuperview()
+            make.trailing.lessThanOrEqualToSuperview()
+            // 信息区高度由内容决定，行高随之收紧
+            make.bottom.equalToSuperview().priority(.high)
+        }
+
+        avatarView.backgroundColor = .clear
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.snp.makeConstraints { make in
+            avatarSizeConstraint = make.width.height.equalTo(28).constraint
+        }
+        avatarView.setContentHuggingPriority(.required, for: .horizontal)
+        avatarView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         upLabel.setContentHuggingPriority(.required, for: .vertical)
         upLabel.setContentCompressionResistancePriority(.required, for: .vertical)
-        upLabel.textColor = UIColor(named: "titleColor")
-        upLabel.adjustsFontSizeToFitWidth = true
-        upLabel.minimumScaleFactor = 0.1
+        upLabel.textColor = UIColor(named: "titleColor")?.withAlphaComponent(0.7)
+        upLabel.lineBreakMode = .byTruncatingTail
     }
 
     func setup(data: any DisplayData) {
@@ -141,6 +139,7 @@ class FeedCollectionViewCell: BLMotionCollectionViewCell {
         let style = styleOverride ?? Settings.displayStyle
         titleLabel.font = style.titleFont
         upLabel.font = style.upFont
+        avatarSizeConstraint?.update(offset: style.avatarSize)
     }
 
     @objc private func actionLongPress(sender: UILongPressGestureRecognizer) {
@@ -189,22 +188,34 @@ extension FeedDisplayStyle {
     var titleFont: UIFont {
         switch self {
         case .large:
-            return UIFont.preferredFont(forTextStyle: .headline)
+            return BLFont.cardTitleLarge
         case .normal:
-            return UIFont.systemFont(ofSize: 30, weight: .semibold)
+            return BLFont.cardTitle
         case .sideBar:
-            return UIFont.systemFont(ofSize: 26, weight: .semibold)
+            return BLFont.cardTitleCompact
         }
     }
 
     var upFont: UIFont {
         switch self {
         case .large:
-            return UIFont.preferredFont(forTextStyle: .footnote)
+            return BLFont.subtitle
         case .normal:
-            return UIFont.systemFont(ofSize: 24)
+            return BLFont.caption
         case .sideBar:
-            return UIFont.systemFont(ofSize: 20, weight: .semibold)
+            return UIFont.systemFont(ofSize: 18)
+        }
+    }
+
+    /// 第二行小头像尺寸，与 UP 主那行文字等高
+    var avatarSize: CGFloat {
+        switch self {
+        case .large:
+            return 30
+        case .normal:
+            return 28
+        case .sideBar:
+            return 24
         }
     }
 }

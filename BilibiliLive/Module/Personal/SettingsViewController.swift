@@ -123,8 +123,9 @@ class SettingsViewController: UIViewController {
             }
 
             SectionModel(title: "界面") {
-                Navigation(title: "自定义Tab栏", desp: "") { [weak self] in
+                Navigation(title: "导航栏排序", desp: "") { [weak self] in
                     let controller = TabBarCustomizationViewController()
+                    controller.modalPresentationStyle = .overFullScreen
                     self?.present(controller, animated: true)
                 }
 
@@ -368,6 +369,7 @@ extension SettingsViewController: UICollectionViewDelegate {
 }
 
 class SettingsSwitchCell: BLMotionCollectionViewCell {
+    private let glassView = BLGlass.makeView(cornerRadius: 16)
     private let titleLabel = UILabel()
     private let descLabel = UILabel()
 
@@ -394,9 +396,16 @@ class SettingsSwitchCell: BLMotionCollectionViewCell {
     }
 
     func setupView() {
+        contentView.addSubview(glassView)
+        glassView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
         contentView.addSubview(titleLabel)
         contentView.addSubview(descLabel)
-        contentView.layer.cornerRadius = 10
+        titleLabel.font = BLFont.listItem
+        descLabel.font = BLFont.body
+        contentView.layer.cornerRadius = 16
+        contentView.layer.cornerCurve = .continuous
 
         titleLabel.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(20)
@@ -415,21 +424,11 @@ class SettingsSwitchCell: BLMotionCollectionViewCell {
     }
 
     func updateColor() {
-        if traitCollection.userInterfaceStyle == .dark {
-            if isFocused {
-                contentView.backgroundColor = UIColor.white
-                titleLabel.textColor = UIColor.black
-                descLabel.textColor = UIColor.black
-            } else {
-                contentView.backgroundColor = UIColor.clear
-                titleLabel.textColor = UIColor.white
-                descLabel.textColor = UIColor.secondaryLabel
-            }
-        } else {
-            contentView.backgroundColor = isFocused ? UIColor.white : UIColor.clear
-            titleLabel.textColor = .black
-            descLabel.textColor = UIColor.secondaryLabel
-        }
+        // 未聚焦：玻璃底板 + 浅色文字；聚焦：系统白底 + 深色文字
+        glassView.isHidden = isFocused
+        contentView.backgroundColor = isFocused ? BLGlass.Color.focusedFill : .clear
+        titleLabel.textColor = isFocused ? BLGlass.Color.focusedText : BLGlass.Color.text
+        descLabel.textColor = isFocused ? UIColor(white: 0, alpha: 0.55) : UIColor(white: 1, alpha: 0.6)
     }
 }
 
@@ -448,8 +447,8 @@ class SettingsHeaderView: UICollectionReusableView {
 
     func setup() {
         addSubview(label)
-        label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = UIColor.secondaryLabel
+        label.font = BLFont.groupLabel
+        label.textColor = BLGlass.Color.secondaryText
         label.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(20)
             make.top.equalToSuperview().offset(20)

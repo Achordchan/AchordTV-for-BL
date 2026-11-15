@@ -116,9 +116,9 @@ extension LiveRoom: PlayableData {
 
 extension WebRequest.EndPoint {
     static let liveRoom = "https://api.live.bilibili.com/xlive/web-ucenter/v1/xfetter/GetWebList"
-    static let hotLive = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getListByArea"
-    static let areaLive = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getList"
-    static let recommandLive = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getUserRecommend"
+    // 新版 xlive/web-interface/v1/second/* 接口已被风控（返回 -352），改用不需要额外校验的旧版接口
+    static let areaRoomList = "https://api.live.bilibili.com/room/v3/area/getRoomList"
+    static let recommandLive = "https://api.live.bilibili.com/room/v1/room/get_user_recommend"
 }
 
 extension WebRequest {
@@ -135,26 +135,17 @@ extension WebRequest {
             let list: [AreaLiveRoom]
         }
 
-        let resp: Resp = try await request(url: EndPoint.areaLive, parameters: ["platform": "web", "parent_area_id": area, "area_id": 0, "page": page])
+        let resp: Resp = try await request(url: EndPoint.areaRoomList, parameters: ["parent_area_id": area, "area_id": 0, "sort_type": "online", "page": page, "page_size": 30])
         return resp.list
     }
 
     static func requestHotLiveRoom(page: Int) async throws -> [AreaLiveRoom] {
-        struct Resp: Codable {
-            let list: [AreaLiveRoom]
-        }
-
-        let resp: Resp = try await request(url: EndPoint.hotLive, parameters: ["platform": "web", "sort": "online", "page_size": 30, "page": page])
-        return resp.list
+        // parent_area_id 为 0 时返回全站按人气排序的直播间
+        try await requestAreaLiveRoom(area: 0, page: page)
     }
 
     static func requestRecommandLiveRoom(page: Int) async throws -> [AreaLiveRoom] {
-        struct Resp: Codable {
-            let list: [AreaLiveRoom]
-        }
-
-        let resp: Resp = try await request(url: EndPoint.recommandLive, parameters: ["platform": "web", "page_size": 30, "page": page])
-        return resp.list
+        try await request(url: EndPoint.recommandLive, parameters: ["page": page, "page_size": 30])
     }
 }
 
@@ -165,22 +156,29 @@ struct AreaLiveRoom: DisplayData, Codable, PlayableData {
     let system_cover: String
     let face: URL?
     let user_cover: URL?
-    let parent_name: String
-    let area_name: String
-    let area_v2_name: String
+    let parent_name: String?
+    let area_name: String?
+    let area_v2_name: String?
     var ownerName: String { uname }
-    var pic: URL? { URL(string: system_cover) }
+    var pic: URL? {
+        // 部分直播间没有关键帧截图，退回主播自己设置的封面
+        if !system_cover.isEmpty, let url = URL(string: system_cover) { return url }
+        return user_cover
+    }
+
     var avatar: URL? { face }
     var cid: Int { 0 }
     var aid: Int { 0 }
 
     var overlay: DisplayOverlay? {
         var leftItems = [DisplayOverlay.DisplayOverlayItem]()
-        leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: area_v2_name))
+        if let area = area_v2_name ?? area_name, !area.isEmpty {
+            leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: area))
+        }
         return DisplayOverlay(leftItems: leftItems)
     }
 
     func toLiveRoom() -> LiveRoom {
-        return LiveRoom(title: title, room_id: roomid, uname: uname, area_v2_name: area_v2_name, keyframe: system_cover.isEmpty ? nil : system_cover, face: face, cover_from_user: user_cover)
+        return LiveRoom(title: title, room_id: roomid, uname: uname, area_v2_name: area_v2_name ?? area_name ?? "", keyframe: system_cover.isEmpty ? nil : system_cover, face: face, cover_from_user: user_cover)
     }
 }

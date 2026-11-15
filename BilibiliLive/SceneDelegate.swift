@@ -13,6 +13,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let window = UIWindow(windowScene: windowScene)
         self.window = window
 
+        #if DEBUG
+            // 调试：tvOS 模拟器无法用命令切换外观，设置 FORCE_LIGHT=1 强制浅色以检查浅色外观
+            if ProcessInfo.processInfo.environment["FORCE_LIGHT"] == "1" {
+                window.overrideUserInterfaceStyle = .light
+            }
+            // 调试：设置环境变量 LOGIN_PREVIEW_PHASE 时直接展示登录页对应状态，不影响已登录账号
+            if ProcessInfo.processInfo.environment["LOGIN_PREVIEW_PHASE"] != nil {
+                window.rootViewController = LoginViewController.create()
+                window.makeKeyAndVisible()
+                return
+            }
+        #endif
+
         if ApiRequest.isLogin() {
             if let expireDate = ApiRequest.getToken()?.expireDate {
                 let now = Date()

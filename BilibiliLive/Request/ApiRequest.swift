@@ -36,6 +36,8 @@ enum ApiRequest {
         case fail
         case expire
         case waiting
+        /// 已扫码，等待手机端确认（86090）
+        case scanned
     }
 
     static func getToken() -> LoginToken? {
@@ -153,7 +155,7 @@ enum ApiRequest {
         }
     }
 
-    static func requestLoginQR(handler: ((String, String) -> Void)? = nil) {
+    static func requestLoginQR(handler: ((String, String) -> Void)? = nil, onError: (() -> Void)? = nil) {
         class Resp: Codable {
             let authCode: String
             let url: String
@@ -168,6 +170,7 @@ enum ApiRequest {
                 handler?(res.authCode, res.url)
             case let .failure(error):
                 print(error)
+                onError?()
             }
         }
     }
@@ -223,6 +226,7 @@ enum ApiRequest {
                     switch code {
                     case 86038: handler?(.expire)
                     case 86039: handler?(.waiting)
+                    case 86090: handler?(.scanned)
                     default:
                         break
                     }
