@@ -29,7 +29,7 @@ class DebugPlugin: NSObject, CommonPlayerPlugin {
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
         let debugEnableImage = UIImage(systemName: "terminal.fill")
         let debugDisableImage = UIImage(systemName: "terminal")
-        let debugAction = UIAction(title: "Debug", image: debugEnable ? debugEnableImage : debugDisableImage) {
+        let debugAction = UIAction(title: "调试信息", image: debugEnable ? debugEnableImage : debugDisableImage) {
             [weak self] action in
             guard let self = self else { return }
             if self.debugEnable {
@@ -40,17 +40,8 @@ class DebugPlugin: NSObject, CommonPlayerPlugin {
                 self.startDebug()
             }
         }
-        if let setting = current.compactMap({ $0 as? UIMenu })
-            .first(where: { $0.identifier == UIMenu.Identifier(rawValue: "setting") })
-        {
-            var child = setting.children
-            child.append(debugAction)
-            if let index = current.firstIndex(of: setting) {
-                current[index] = setting.replacingChildren(child)
-            }
-            return []
-        }
-        return [debugAction]
+        PlayerMenu.appendToMore([debugAction], section: (PlayerMenu.diagnostics, "诊断"), current: &current)
+        return []
     }
 
     deinit {

@@ -31,8 +31,12 @@ class LiveDanmuHistoryPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
-        let action = UIAction(title: "弹幕历史", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+        let action = UIAction(title: "弹幕历史", image: UIImage(systemName: "clock.arrow.circlepath")) { [weak self] _ in
             self?.showHistory()
+        }
+        // 并入「弹幕」按钮，不单独占一个底栏位置
+        if PlayerMenu.append([action], to: PlayerMenu.danmu, current: &current) {
+            return []
         }
         return [action]
     }

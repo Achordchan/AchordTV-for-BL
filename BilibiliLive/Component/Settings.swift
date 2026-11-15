@@ -51,13 +51,15 @@ enum Settings {
     @UserDefaultCodable("Settings.danmuDuration", defaultValue: 8)
     static var danmuDuration: Double
 
-    @UserDefault("Settings.losslessAudio", defaultValue: false)
+    /// 有杜比全景声 / Hi-Res 无损流时（需大会员）设为默认音轨；拿不到时自动用普通音轨
+    @UserDefault("Settings.losslessAudio", defaultValue: true)
     static var losslessAudio: Bool
 
     @UserDefault("Settings.preferAvc", defaultValue: false)
     static var preferAvc: Bool
 
-    @UserDefault("Settings.multiCDNEnabled", defaultValue: false)
+    /// 分段拆块后从多个 CDN 节点并发下载；高码率（4K/HDR）时提升明显，异常时自动回退直连
+    @UserDefault("Settings.multiCDNEnabled", defaultValue: true)
     static var multiCDNEnabled: Bool
 
     @UserDefault("Settings.danmuMask", defaultValue: true)

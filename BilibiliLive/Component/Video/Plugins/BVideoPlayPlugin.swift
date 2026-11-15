@@ -100,6 +100,23 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
         networkLogTimer?.invalidate()
     }
 
+    /// 当前播放资源的传输状态（供播放页右下角状态浮层展示）
+    var transportStatus: PlaybackTransportStatus {
+        guard let delegate = playerDelegate else { return .unknown }
+        switch delegate.effectiveTransportMode {
+        case .accelerated:
+            return delegate.hasDowngradedRequests ? .acceleratedPartiallyDirect : .accelerated(hostCount: delegate.cdnCandidates.count)
+        case .proxy:
+            return .direct
+        case .direct:
+            // 设置要求加速，但本地代理没起来或加速失败后回退了直连
+            if acceleratedRecoveryAttempts > 0 || delegate.transportMode != .direct {
+                return .fellBackToDirect
+            }
+            return .direct
+        }
+    }
+
     /// 供 DebugPlugin 浮层显示的网络诊断信息
     var networkDebugInfo: String {
         var lines = [String]()
@@ -149,19 +166,13 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
-        // 挂进「播放设置」，与 Debug 并列（依赖 SpeedChangerPlugin 先创建 setting 菜单）
+        // 放进「更多 › 诊断」，与调试信息并列
         let action = UIAction(title: isProbingCDN ? "CDN 测速中…" : "CDN 测速",
                               image: UIImage(systemName: "speedometer"))
         { [weak self] _ in
             self?.probeCDN()
         }
-        if let setting = current.compactMap({ $0 as? UIMenu })
-            .first(where: { $0.identifier == UIMenu.Identifier(rawValue: "setting") }),
-            let index = current.firstIndex(of: setting)
-        {
-            current[index] = setting.replacingChildren(setting.children + [action])
-            return []
-        }
+        PlayerMenu.appendToMore([action], section: (PlayerMenu.diagnostics, "诊断"), current: &current)
         return []
     }
 

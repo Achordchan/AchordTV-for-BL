@@ -71,6 +71,7 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
     private let proxyRegistry = MediaProxyRegistry()
     private let diagLock = NSLock()
     private var _accelerationText = ""
+    private var _hasDowngradedRequests = false
     /// 播放中途检测到当前 host 吞吐撑不住时，外部（BVideoPlayPlugin）指定的优先 host，
     /// sidx 探测会把它排到候选队首，覆盖默认 URL 顺序
     private var preferredHost: String?
@@ -89,6 +90,21 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
     private func updateAccelerationText(_ text: String) {
         diagLock.lock()
         _accelerationText = text
+        if text.isEmpty { _hasDowngradedRequests = false }
+        diagLock.unlock()
+    }
+
+    /// 加速模式下是否有请求因超出容量等原因改走直连（供播放页状态浮层展示）
+    var hasDowngradedRequests: Bool {
+        diagLock.lock()
+        defer { diagLock.unlock() }
+        return _hasDowngradedRequests
+    }
+
+    private func recordDowngraded(_ downgraded: Bool) {
+        guard downgraded else { return }
+        diagLock.lock()
+        _hasDowngradedRequests = true
         diagLock.unlock()
     }
 
@@ -434,17 +450,14 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         }
 
         if Settings.losslessAudio {
-            if let audios = info.dash.dolby?.audio {
-                // 只添加第一个杜比音频流的第一个 URL
-                if let firstAudio = audios.first,
-                   let firstUrl = BVideoUrlUtils.sortUrls(base: firstAudio.base_url, backup: firstAudio.backup_url).first
-                {
-                    addAudioPlayBackInfo(info: firstAudio, url: firstUrl, duration: info.dash.duration)
-                }
+            // 优先杜比全景声，没有（或杜比字段里音轨为空）时再用 Hi-Res 无损 FLAC；只添加第一个流的第一个 URL
+            if let dolbyAudio = info.dash.dolby?.audio?.first,
+               let firstUrl = dolbyAudio.playableURLs.first
+            {
+                addAudioPlayBackInfo(info: dolbyAudio, url: firstUrl, duration: info.dash.duration)
             } else if let audio = info.dash.flac?.audio,
                       let firstUrl = audio.playableURLs.first
             {
-                // 只添加第一个 FLAC 音频 URL
                 addAudioPlayBackInfo(info: audio, url: firstUrl, duration: info.dash.duration)
             }
         }
@@ -757,6 +770,7 @@ private extension BilibiliVideoResourceLoaderDelegate {
 
     private func buildAccelerationText(downloader: MediaRangeDownloader) async -> String {
         let diag = await downloader.diagnostics()
+        recordDowngraded(diag.downgradedToDirect)
         let modeText: String
         switch diag.transportMode {
         case .direct: modeText = "direct"

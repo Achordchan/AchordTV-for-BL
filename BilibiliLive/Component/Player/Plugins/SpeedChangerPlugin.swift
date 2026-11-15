@@ -75,8 +75,6 @@ class SpeedChangerPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
-        let gearImage = UIImage(systemName: "gearshape")
-
         let speedActions = PlaySpeed.blDefaults.map { playSpeed in
             UIAction(title: playSpeed.name, state: currentPlaySpeed == playSpeed ? .on : .off) {
                 [weak self] _ in
@@ -86,8 +84,12 @@ class SpeedChangerPlugin: NSObject, CommonPlayerPlugin {
                 currentPlaySpeed = playSpeed
             }
         }
-        let playSpeedMenu = UIMenu(title: "播放速度", options: [.displayInline, .singleSelection], children: speedActions)
-        let menu = UIMenu(title: "播放设置", image: gearImage, identifier: UIMenu.Identifier(rawValue: "setting"), children: [playSpeedMenu])
+        // 倍速是高频操作，单独作为底栏按钮
+        let menu = UIMenu(title: "倍速",
+                          image: UIImage(systemName: "gauge.with.dots.needle.67percent"),
+                          identifier: PlayerMenu.speed,
+                          options: .singleSelection,
+                          children: speedActions)
         return [menu]
     }
 }

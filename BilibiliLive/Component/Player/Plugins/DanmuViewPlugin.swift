@@ -38,6 +38,7 @@ class DanmuViewPlugin: NSObject {
     private let danmuProvider: DanmuProviderProtocol
     private var timeObserver: Any?
     private weak var currentPlayer: AVPlayer? // 保存当前 player 的弱引用
+    private weak var playerVC: AVPlayerViewController?
     private var cancellable = Set<AnyCancellable>()
 
     private func shoot(_ model: DanmakuCellModel) {
@@ -120,22 +121,47 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
         danMuView.pause()
     }
 
+    func playerDidLoad(playerVC: AVPlayerViewController) {
+        self.playerVC = playerVC
+    }
+
+    /// 底栏「弹幕」按钮：显示开关、展示时长、屏蔽等级合在一处；图标随开关状态变化
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
-        let danmuImage = UIImage(systemName: "list.bullet.rectangle.fill")
-        let danmuImageDisable = UIImage(systemName: "list.bullet.rectangle")
-        let danmuAction = UIAction(title: "Show Danmu", image: danMuView.isHidden ? danmuImageDisable : danmuImage) {
-            action in
-            Defaults.shared.showDanmu.toggle()
-            action.image = Defaults.shared.showDanmu ? danmuImage : danmuImageDisable
+        let isShowing = Defaults.shared.showDanmu
+        // 刷新底栏，让按钮图标和标题反映最新状态
+        let refreshMenus: () -> Void = { [weak self] in
+            DispatchQueue.main.async {
+                (self?.playerVC?.parent as? CommonPlayerViewController)?.updateMenus()
+            }
         }
-        let danmuDurationMenu = UIMenu(title: "弹幕展示时长", options: [.displayInline, .singleSelection], children: [4, 6, 8].map { dur in
+        let toggleAction = UIAction(title: "显示弹幕",
+                                    image: UIImage(systemName: isShowing ? "eye" : "eye.slash"),
+                                    state: isShowing ? .on : .off)
+        { action in
+            Defaults.shared.showDanmu.toggle()
+            // 菜单选中后不会自动收起，已展示的菜单项不会因重建而刷新，
+            // 所以直接改这个 action 自身的勾选状态和图标
+            let showing = Defaults.shared.showDanmu
+            action.state = showing ? .on : .off
+            action.image = UIImage(systemName: showing ? "eye" : "eye.slash")
+            refreshMenus()
+        }
+        let durationMenu = UIMenu(title: "展示时长", options: [.displayInline, .singleSelection], children: [4, 6, 8].map { dur in
             UIAction(title: "\(dur) 秒", state: dur == Settings.danmuDuration ? .on : .off) { _ in Settings.danmuDuration = dur }
         })
-        let danmuAILevelMenu = UIMenu(title: "弹幕屏蔽等级", options: [.displayInline, .singleSelection], children: [Int32](1...10).map { level in
-            UIAction(title: "\(level)", state: level == Settings.danmuAILevel ? .on : .off) { _ in Settings.danmuAILevel = level }
-        })
-        let danmuSettingMenu = UIMenu(title: "弹幕设置", image: UIImage(systemName: "keyboard.badge.ellipsis"), children: [danmuDurationMenu, danmuAILevelMenu])
-
-        return [danmuAction, danmuSettingMenu]
+        let levelMenu = UIMenu(title: "智能屏蔽等级（当前 \(Settings.danmuAILevel)）",
+                               image: UIImage(systemName: "shield.lefthalf.filled"),
+                               options: .singleSelection,
+                               children: [Int32](1...10).map { level in
+                                   UIAction(title: "\(level)", state: level == Settings.danmuAILevel ? .on : .off) { _ in
+                                       Settings.danmuAILevel = level
+                                       refreshMenus()
+                                   }
+                               })
+        let menu = UIMenu(title: "弹幕",
+                          image: UIImage(systemName: isShowing ? "list.bullet.rectangle.fill" : "list.bullet.rectangle"),
+                          identifier: PlayerMenu.danmu,
+                          children: [toggleAction, durationMenu, levelMenu])
+        return [menu]
     }
 }
