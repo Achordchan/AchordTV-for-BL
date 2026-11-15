@@ -69,6 +69,8 @@ class LivePlayerViewModel {
                     let infoPlugin = BVideoInfoPlugin(title: room.title, subTitle: nil, desp: nil, pic: room.pic, viewPoints: nil)
                     self.onPluginReady?([infoPlugin])
                 }
+            } catch is CancellationError {
+                // 取流请求已被更新的请求（例如切换清晰度）取代
             } catch let err {
                 await MainActor.run {
                     onError?(String(describing: err))
@@ -95,6 +97,8 @@ class LivePlayerViewModel {
                 } else {
                     try await playFirstInfo()
                 }
+            } catch is CancellationError {
+                // 已被更新的取流请求取代
             } catch let err {
                 await MainActor.run {
                     onError?(err.localizedDescription)
@@ -103,27 +107,37 @@ class LivePlayerViewModel {
         }
     }
 
-    /// 切换清晰度：按新的 qn 重新取流并从推荐线路开始播放
+    /// 切换清晰度：按新的 qn 重新取流并从推荐线路开始播放。
+    /// 连续切换时只有最后一次生效：之前的任务被取消，迟到的响应在提交前被丢弃（见 initPlayer）。
     func switchQuality(qn: Int) {
         requestedQn = qn
         retryCount = 0
-        Task {
+        qualitySwitchTask?.cancel()
+        qualitySwitchTask = Task {
             do {
                 try await initPlayer()
                 optionsPlugin?.reloadMenus()
+            } catch is CancellationError {
+                // 被更新的切换取代
             } catch let err {
                 await MainActor.run {
                     onError?(err.localizedDescription)
                 }
             }
         }
+    }
+
+    /// 当前实际在播的那条流；同一次取流里不同封装/编码的实际清晰度可能不同，必须按在播地址取
+    private var activePlayInfo: LivePlayUrlInfo? {
+        let currentUrl = playPlugin.currentURLString
+        return allPlayInfos.first { $0.url == currentUrl } ?? allPlayInfos.first
     }
 
     /// 右下角状态：当前清晰度 · 线路（直播没有多 CDN 加速，按线路展示）
     @MainActor private func transportStatus() -> PlaybackTransportStatus {
-        guard let first = allPlayInfos.first else { return .unknown }
+        guard let active = activePlayInfo else { return .unknown }
         var parts = [String]()
-        if let qn = first.current_qn, let name = qualityOptions.first(where: { $0.qn == qn })?.name {
+        if let qn = active.current_qn, let name = qualityOptions.first(where: { $0.qn == qn })?.name {
             parts.append(name)
         }
         let currentUrl = playPlugin.currentURLString
@@ -136,7 +150,7 @@ class LivePlayerViewModel {
     @MainActor private func makeOptionsPlugin() -> LiveStreamOptionsPlugin {
         let plugin = LiveStreamOptionsPlugin()
         plugin.qualities = { [weak self] in self?.qualityOptions ?? [] }
-        plugin.currentQn = { [weak self] in self?.allPlayInfos.first?.current_qn }
+        plugin.currentQn = { [weak self] in self?.activePlayInfo?.current_qn }
         plugin.lines = { [weak self] in self?.allPlayInfos ?? [] }
         plugin.onSelectQuality = { [weak self] qn in
             self?.switchQuality(qn: qn)
@@ -149,7 +163,8 @@ class LivePlayerViewModel {
     }
 
     func debugInfo() -> String {
-        return "\(allPlayInfos.first?.formate ?? "") \(allPlayInfos.first?.current_qn ?? 0) retry:\(retryCount)"
+        let active = activePlayInfo
+        return "\(active?.formate ?? "") \(active?.current_qn ?? 0) retry:\(retryCount)"
     }
 
     func fetchDespInfo() async -> WebRequest.LiveRoomInfo? {
@@ -168,6 +183,9 @@ class LivePlayerViewModel {
     private var requestedQn = 10000
     private var qualityOptions = [LiveQualityOption]()
     private weak var optionsPlugin: LiveStreamOptionsPlugin?
+    private var qualitySwitchTask: Task<Void, Never>?
+    /// 每次取流加一；只有最新一次取流的结果会被提交和播放
+    private var streamGeneration = 0
 
     private func refreshRoomsID() async throws {
         let info = try await WebRequest.requestLiveRoomInit(roomID: roomID)
@@ -178,48 +196,57 @@ class LivePlayerViewModel {
         liveTime = info.live_time
     }
 
+    /// 按 requestedQn 取流。结果先在本地组装，回到主线程确认仍是最新一次请求后才提交并开始播放；
+    /// 被更新的请求取代时抛 CancellationError，不改动任何状态。
     private func initPlayer() async throws {
-        allPlayInfos = []
+        let (generation, qn) = await MainActor.run { () -> (Int, Int) in
+            streamGeneration += 1
+            return (streamGeneration, requestedQn)
+        }
 
-        let playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: requestedQn)
+        let playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: qn)
         let streams = playUrl.stream
 
+        var infos = [LivePlayUrlInfo]()
         for stream in streams {
             for content in stream.format {
                 let formate = content.formatName
-                let codecs = content.codec
-                for codec in codecs {
-                    let qn = codec.currentQn
+                for codec in content.codec {
                     let baseUrl = codec.baseurl
                     for url_info in codec.urlInfo {
-                        let host = url_info.host
-                        let extra = url_info.extra
-                        let url = "\(host)\(baseUrl)\(extra)"
-                        let playInfo = LivePlayUrlInfo(formate: formate, url: url, current_qn: qn, codec_name: codec.codecName)
-                        allPlayInfos.append(playInfo)
+                        let url = "\(url_info.host)\(baseUrl)\(url_info.extra)"
+                        infos.append(LivePlayUrlInfo(formate: formate, url: url, current_qn: codec.currentQn, codec_name: codec.codecName))
                     }
                 }
             }
         }
 
-        allPlayInfos.sort { a, b in
+        infos.sort { a, b in
             return a.current_qn ?? 0 > b.current_qn ?? 0
+        }
+        infos.sort { a, _ in
+            return a.formate == "fmp4"
         }
 
         // 可选清晰度 = 各路流 accept_qn 的并集，名称取 g_qn_desc（原画、蓝光、超清…）
         let accepted = Set(streams.flatMap { $0.format.flatMap { $0.codec.flatMap { $0.acceptQn ?? [$0.currentQn] } } })
-        qualityOptions = (playUrl.g_qn_desc ?? [])
+        let options = (playUrl.g_qn_desc ?? [])
             .filter { accepted.contains($0.qn) }
             .sorted { $0.qn > $1.qn }
             .map { LiveQualityOption(qn: $0.qn, name: $0.desc) }
 
-        allPlayInfos.sort { a, b in
-            return a.formate == "fmp4"
+        guard let first = infos.first else { throw LiveError.noPlaybackUrl }
+        let resolved = infos
+        let committed = await MainActor.run { () -> Bool in
+            guard generation == streamGeneration else { return false }
+            allPlayInfos = resolved
+            playInfos = resolved
+            qualityOptions = options
+            Logger.debug("play => \(first.url)")
+            playPlugin.play(urlString: first.url)
+            return true
         }
-
-        Logger.debug("all info arry:\(playInfos)")
-        playInfos = allPlayInfos
-        try await playFirstInfo()
+        if !committed { throw CancellationError() }
     }
 
     func playFirstInfo() async throws {
