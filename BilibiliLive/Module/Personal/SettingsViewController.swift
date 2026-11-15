@@ -448,7 +448,7 @@ class SettingsHeaderView: UICollectionReusableView {
     func setup() {
         addSubview(label)
         label.font = BLFont.groupLabel
-        label.textColor = BLGlass.Color.secondaryText
+        label.textColor = BLGlass.Color.pageSecondaryText
         label.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(20)
             make.top.equalToSuperview().offset(20)

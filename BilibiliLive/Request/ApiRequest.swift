@@ -217,8 +217,8 @@ enum ApiRequest {
             switch result {
             case var .success(res):
                 res.tokenInfo.expireDate = Date().addingTimeInterval(TimeInterval(res.tokenInfo.expiresIn))
+                // 不在这里写入 cookie：调用方确认要采用这次登录后再写，避免被丢弃的响应覆盖当前会话
                 let cookies = res.cookieInfo.toCookies()
-                CookieHandler.shared.saveCookie(list: cookies, syncWithAccount: false)
                 handler?(.success(token: res.tokenInfo, cookies: cookies))
             case let .failure(error):
                 switch error {

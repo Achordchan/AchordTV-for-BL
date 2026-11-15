@@ -398,7 +398,7 @@ final class PersonalSectionHeaderView: UICollectionReusableView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         label.font = BLFont.groupLabel
-        label.textColor = BLGlass.Color.secondaryText
+        label.textColor = BLGlass.Color.pageSecondaryText
         addSubview(label)
         label.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(8)

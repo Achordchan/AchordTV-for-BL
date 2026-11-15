@@ -295,6 +295,8 @@ class LoginViewController: UIViewController {
             case let .success(token, cookies):
                 self.stopTimer()
                 self.apply(phase: .success)
+                // 只有被采用的登录结果才写入 cookie（registerAccount 拉取资料时需要新账号的 cookie）
+                CookieHandler.shared.saveCookie(list: cookies, syncWithAccount: false)
                 AccountManager.shared.registerAccount(token: token, cookies: cookies) { [weak self] _ in
                     self?.didLoginSucceed()
                 }

@@ -50,5 +50,8 @@ enum BLGlass {
         /// 危险操作文字（如登出）：玻璃上 / 聚焦白底上
         static let destructive = UIColor(red: 1.0, green: 0.45, blue: 0.45, alpha: 1)
         static let destructiveOnLight = UIColor(red: 0.85, green: 0.15, blue: 0.15, alpha: 1)
+        /// 不在玻璃上、直接放在页面背景上的文字（页面标题、分区标题等），跟随系统深浅色
+        static let pageText = UIColor.label
+        static let pageSecondaryText = UIColor.secondaryLabel
     }
 }
