@@ -29,14 +29,14 @@ class TabBarCustomizationViewController: UIViewController {
         let label = UILabel()
         label.text = "导航栏排序"
         label.font = BLFont.pageTitle
-        label.textColor = BLGlass.Color.pageText
+        label.textColor = BLGlass.Color.text
         return label
     }()
 
     private let hintLabel: UILabel = {
         let label = UILabel()
         label.font = BLFont.body
-        label.textColor = BLGlass.Color.pageSecondaryText
+        label.textColor = BLGlass.Color.secondaryText
         return label
     }()
 
@@ -493,7 +493,7 @@ class TabBarSectionHeaderView: UICollectionReusableView {
     let label: UILabel = {
         let l = UILabel()
         l.font = BLFont.groupLabel
-        l.textColor = BLGlass.Color.pageSecondaryText
+        l.textColor = BLGlass.Color.secondaryText
         return l
     }()
 
