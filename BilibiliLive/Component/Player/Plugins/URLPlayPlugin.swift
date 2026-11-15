@@ -15,6 +15,8 @@ class URLPlayPlugin: NSObject {
     private let referer: String
     private let isLive: Bool
     private var currentUrl: String?
+    /// 当前正在播放的地址（直播状态浮层用来判断所在线路）
+    var currentURLString: String? { currentUrl }
 
     init(referer: String = "", isLive: Bool = false) {
         self.referer = referer

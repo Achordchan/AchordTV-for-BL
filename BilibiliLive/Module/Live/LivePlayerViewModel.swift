@@ -51,10 +51,14 @@ class LivePlayerViewModel {
                 try await initPlayer()
 
                 let danmu = await initDanmu()
-                let linePlugin = LineCandidatesPlugin(candidates: playInfos) { [weak self] url in
-                    self?.playPlugin.play(urlString: url)
+                let optionsPlugin = await makeOptionsPlugin()
+                // 状态浮层最后添加，保证盖在弹幕之上
+                let networkStatus = await MainActor.run {
+                    PlaybackNetworkStatusPlugin { [weak self] in
+                        self?.transportStatus() ?? .unknown
+                    }
                 }
-                self.onPluginReady?(danmu + [linePlugin])
+                self.onPluginReady?(danmu + [optionsPlugin, networkStatus])
 
                 if let info = await fetchDespInfo() {
                     let subtitle = "\(room.ownerName)·\(info.parent_area_name) \(info.area_name)"
@@ -99,6 +103,51 @@ class LivePlayerViewModel {
         }
     }
 
+    /// 切换清晰度：按新的 qn 重新取流并从推荐线路开始播放
+    func switchQuality(qn: Int) {
+        requestedQn = qn
+        retryCount = 0
+        Task {
+            do {
+                try await initPlayer()
+                optionsPlugin?.reloadMenus()
+            } catch let err {
+                await MainActor.run {
+                    onError?(err.localizedDescription)
+                }
+            }
+        }
+    }
+
+    /// 右下角状态：当前清晰度 · 线路（直播没有多 CDN 加速，按线路展示）
+    @MainActor private func transportStatus() -> PlaybackTransportStatus {
+        guard let first = allPlayInfos.first else { return .unknown }
+        var parts = [String]()
+        if let qn = first.current_qn, let name = qualityOptions.first(where: { $0.qn == qn })?.name {
+            parts.append(name)
+        }
+        let currentUrl = playPlugin.currentURLString
+        if allPlayInfos.count > 1, let currentUrl, let index = allPlayInfos.firstIndex(where: { $0.url == currentUrl }) {
+            parts.append("线路 \(index + 1)")
+        }
+        return parts.isEmpty ? .live(description: "直播") : .live(description: parts.joined(separator: " · "))
+    }
+
+    @MainActor private func makeOptionsPlugin() -> LiveStreamOptionsPlugin {
+        let plugin = LiveStreamOptionsPlugin()
+        plugin.qualities = { [weak self] in self?.qualityOptions ?? [] }
+        plugin.currentQn = { [weak self] in self?.allPlayInfos.first?.current_qn }
+        plugin.lines = { [weak self] in self?.allPlayInfos ?? [] }
+        plugin.onSelectQuality = { [weak self] qn in
+            self?.switchQuality(qn: qn)
+        }
+        plugin.onSelectLine = { [weak self] url in
+            self?.playPlugin.play(urlString: url)
+        }
+        optionsPlugin = plugin
+        return plugin
+    }
+
     func debugInfo() -> String {
         return "\(allPlayInfos.first?.formate ?? "") \(allPlayInfos.first?.current_qn ?? 0) retry:\(retryCount)"
     }
@@ -115,6 +164,10 @@ class LivePlayerViewModel {
     private var danMuProvider: LiveDanMuProvider?
     private var retryCount = 0
     private var liveTime: String?
+    /// 请求的清晰度（默认原画；未登录或直播间不支持时接口会自动降级）
+    private var requestedQn = 10000
+    private var qualityOptions = [LiveQualityOption]()
+    private weak var optionsPlugin: LiveStreamOptionsPlugin?
 
     private func refreshRoomsID() async throws {
         let info = try await WebRequest.requestLiveRoomInit(roomID: roomID)
@@ -128,7 +181,8 @@ class LivePlayerViewModel {
     private func initPlayer() async throws {
         allPlayInfos = []
 
-        let streams = try await WebRequest.requestLiveStreams(roomID: roomID)
+        let playUrl = try await WebRequest.requestLiveStreams(roomID: roomID, qn: requestedQn)
+        let streams = playUrl.stream
 
         for stream in streams {
             for content in stream.format {
@@ -151,6 +205,13 @@ class LivePlayerViewModel {
         allPlayInfos.sort { a, b in
             return a.current_qn ?? 0 > b.current_qn ?? 0
         }
+
+        // 可选清晰度 = 各路流 accept_qn 的并集，名称取 g_qn_desc（原画、蓝光、超清…）
+        let accepted = Set(streams.flatMap { $0.format.flatMap { $0.codec.flatMap { $0.acceptQn ?? [$0.currentQn] } } })
+        qualityOptions = (playUrl.g_qn_desc ?? [])
+            .filter { accepted.contains($0.qn) }
+            .sorted { $0.qn > $1.qn }
+            .map { LiveQualityOption(qn: $0.qn, name: $0.desc) }
 
         allPlayInfos.sort { a, b in
             return a.formate == "fmp4"
@@ -230,17 +291,23 @@ extension WebRequest {
         return try await request(url: EndPoint.liveRoomInfo, parameters: ["id": roomID])
     }
 
-    static func requestLiveStreams(roomID: Int) async throws -> [LiveStream] {
+    struct LivePlayUrl: Codable {
+        struct QnDesc: Codable {
+            let qn: Int
+            let desc: String
+        }
+
+        let cid: Int
+        let g_qn_desc: [QnDesc]?
+        let stream: [LiveStream]
+    }
+
+    static func requestLiveStreams(roomID: Int, qn: Int = 10000) async throws -> LivePlayUrl {
         struct LiveRoomStreamInfo: Codable {
             let playurl_info: PlayUrlInfo
 
             struct PlayUrlInfo: Codable {
-                let playurl: PlayUrl
-            }
-
-            struct PlayUrl: Codable {
-                let cid: Int
-                let stream: [LiveStream]
+                let playurl: LivePlayUrl
             }
         }
         let info: LiveRoomStreamInfo = try await request(url: EndPoint.liveRoomStream,
@@ -248,12 +315,12 @@ extension WebRequest {
                                                                       "protocol": "1",
                                                                       "format": "0,1,2",
                                                                       "codec": "0,1",
-                                                                      "qn": "10000",
+                                                                      "qn": "\(qn)",
                                                                       "platform": "web",
                                                                       "ptype": "8",
                                                                       "dolby": "5",
                                                                       "panorama": 1])
-        return info.playurl_info.playurl.stream
+        return info.playurl_info.playurl
     }
 }
 
@@ -276,12 +343,14 @@ struct LiveStream: Codable {
             let urlInfo: [URLInfo]
             let codecName: String
             let currentQn: Int
+            let acceptQn: [Int]?
             let baseurl: String
 
             enum CodingKeys: String, CodingKey {
                 case urlInfo = "url_info"
                 case codecName = "codec_name"
                 case currentQn = "current_qn"
+                case acceptQn = "accept_qn"
                 case baseurl = "base_url"
             }
 

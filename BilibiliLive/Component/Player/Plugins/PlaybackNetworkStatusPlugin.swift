@@ -21,6 +21,8 @@ enum PlaybackTransportStatus: Equatable {
     case acceleratedPartiallyDirect
     /// 设置开启了加速，但加速不可用，已回退直连
     case fellBackToDirect
+    /// 直播：当前清晰度与线路（如「原画 · 线路 1」）
+    case live(description: String)
 }
 
 final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
@@ -278,6 +280,8 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
             return ("bolt.fill", "多 CDN 加速 · 部分直连")
         case .fellBackToDirect:
             return ("bolt.slash.fill", "加速不可用 · 已直连")
+        case let .live(description):
+            return ("dot.radiowaves.left.and.right", description)
         }
     }
 
