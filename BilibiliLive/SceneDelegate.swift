@@ -27,19 +27,33 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
 
         if ApiRequest.isLogin() {
-            if let expireDate = ApiRequest.getToken()?.expireDate {
-                let now = Date()
-                if expireDate.timeIntervalSince(now) < 60 * 60 * 30 {
-                    ApiRequest.refreshToken()
+            if Settings.chooseAccountOnLaunch, AccountManager.shared.accounts.count >= 2 {
+                // 多账号冷启动：先选账号，选定后再刷新该账号的 token 并进入首页
+                let picker = LaunchAccountPickerViewController()
+                picker.onAccountChosen = { [weak self] in
+                    Self.refreshTokenIfNeeded()
+                    self?.replaceRootViewController(with: BLTabBarViewController(), animated: true)
                 }
+                window.rootViewController = picker
             } else {
-                ApiRequest.refreshToken()
+                Self.refreshTokenIfNeeded()
+                window.rootViewController = BLTabBarViewController()
             }
-            window.rootViewController = BLTabBarViewController()
         } else {
             window.rootViewController = LoginViewController.create()
         }
         window.makeKeyAndVisible()
+    }
+
+    /// 当前账号的 token 30 小时内过期（或没有过期时间）时刷新
+    private static func refreshTokenIfNeeded() {
+        if let expireDate = ApiRequest.getToken()?.expireDate {
+            if expireDate.timeIntervalSince(Date()) < 60 * 60 * 30 {
+                ApiRequest.refreshToken()
+            }
+        } else {
+            ApiRequest.refreshToken()
+        }
     }
 
     func showLogin() {

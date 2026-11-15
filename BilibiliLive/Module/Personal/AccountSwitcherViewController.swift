@@ -2,11 +2,6 @@ import Kingfisher
 import UIKit
 
 final class AccountSwitcherViewController: UIViewController {
-    private enum Section: Int, CaseIterable {
-        case accounts
-        case actions
-    }
-
     private let containerView = BLGlass.makeView(cornerRadius: 36)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -17,7 +12,7 @@ final class AccountSwitcherViewController: UIViewController {
         layout.minimumLineSpacing = 40
         layout.minimumInteritemSpacing = 30
         layout.sectionInset = UIEdgeInsets(top: 40, left: 60, bottom: 40, right: 60)
-        layout.itemSize = CGSize(width: 300, height: 320)
+        layout.itemSize = CGSize(width: 300, height: 340)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.backgroundColor = .clear
         collection.remembersLastFocusedIndexPath = true
@@ -141,46 +136,35 @@ final class AccountSwitcherViewController: UIViewController {
 }
 
 extension AccountSwitcherViewController: UICollectionViewDataSource {
-    func numberOfSections(in collectionView: UICollectionView) -> Int {
-        Section.allCases.count
+    /// 账号与「添加账号」在同一组里依次排列，一行放满再换行；「添加账号」固定在最后
+    private func isAddItem(_ indexPath: IndexPath) -> Bool {
+        indexPath.item >= accounts.count
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else { return 0 }
-        switch section {
-        case .accounts:
-            return accounts.count
-        case .actions:
-            return 1
-        }
+        accounts.count + 1
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        guard let section = Section(rawValue: indexPath.section) else { return UICollectionViewCell() }
-        switch section {
-        case .accounts:
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: AccountSwitcherCell.reuseIdentifier, for: indexPath) as! AccountSwitcherCell
-            let account = accounts[indexPath.item]
-            cell.configure(with: account, active: account.profile.mid == AccountManager.shared.activeAccount?.profile.mid)
-            return cell
-        case .actions:
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: AccountSwitcherAddCell.reuseIdentifier, for: indexPath) as! AccountSwitcherAddCell
-            return cell
+        if isAddItem(indexPath) {
+            return collectionView.dequeueReusableCell(withReuseIdentifier: AccountSwitcherAddCell.reuseIdentifier, for: indexPath) as! AccountSwitcherAddCell
         }
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: AccountSwitcherCell.reuseIdentifier, for: indexPath) as! AccountSwitcherCell
+        let account = accounts[indexPath.item]
+        cell.configure(with: account, active: account.profile.mid == AccountManager.shared.activeAccount?.profile.mid)
+        return cell
     }
 }
 
 extension AccountSwitcherViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard let section = Section(rawValue: indexPath.section) else { return }
-        switch section {
-        case .accounts:
-            let account = accounts[indexPath.item]
-            guard account.profile.mid != AccountManager.shared.activeAccount?.profile.mid else { return }
-            switchToAccount(account)
-        case .actions:
+        if isAddItem(indexPath) {
             presentLogin()
+            return
         }
+        let account = accounts[indexPath.item]
+        guard account.profile.mid != AccountManager.shared.activeAccount?.profile.mid else { return }
+        switchToAccount(account)
     }
 }
 
@@ -222,21 +206,22 @@ private final class AccountSwitcherCell: UICollectionViewCell {
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         avatarView.contentMode = .scaleAspectFill
-        avatarView.layer.cornerRadius = 80
+        avatarView.layer.cornerRadius = 70
         avatarView.clipsToBounds = true
 
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = UIFont.systemFont(ofSize: 30, weight: .medium)
         nameLabel.textColor = .white
         nameLabel.textAlignment = .center
-        nameLabel.numberOfLines = 2
+        nameLabel.numberOfLines = 1
+        nameLabel.lineBreakMode = .byTruncatingTail
 
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
         badgeLabel.text = "当前使用"
         badgeLabel.font = UIFont.systemFont(ofSize: 22, weight: .semibold)
         badgeLabel.textColor = .white
         badgeLabel.backgroundColor = UIColor.systemBlue
-        badgeLabel.layer.cornerRadius = 16
+        badgeLabel.layer.cornerRadius = 20
         badgeLabel.clipsToBounds = true
         badgeLabel.textAlignment = .center
         badgeLabel.isHidden = true
@@ -252,18 +237,20 @@ private final class AccountSwitcherCell: UICollectionViewCell {
             background.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
             avatarView.centerXAnchor.constraint(equalTo: background.centerXAnchor),
-            avatarView.topAnchor.constraint(equalTo: background.topAnchor, constant: 36),
-            avatarView.widthAnchor.constraint(equalToConstant: 160),
+            avatarView.topAnchor.constraint(equalTo: background.topAnchor, constant: 32),
+            avatarView.widthAnchor.constraint(equalToConstant: 140),
             avatarView.heightAnchor.constraint(equalTo: avatarView.widthAnchor),
 
-            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 24),
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 20),
             nameLabel.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
             nameLabel.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
 
             badgeLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 16),
             badgeLabel.centerXAnchor.constraint(equalTo: background.centerXAnchor),
             badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 44),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 40),
+            // 标签与卡片底边至少留出 28pt，不贴边
+            badgeLabel.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -28),
         ])
     }
 
@@ -340,7 +327,7 @@ private final class AccountSwitcherAddCell: UICollectionViewCell {
             background.topAnchor.constraint(equalTo: contentView.topAnchor),
             background.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
-            iconView.topAnchor.constraint(equalTo: background.topAnchor, constant: 80),
+            iconView.topAnchor.constraint(equalTo: background.topAnchor, constant: 90),
             iconView.centerXAnchor.constraint(equalTo: background.centerXAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 120),
             iconView.heightAnchor.constraint(equalTo: iconView.widthAnchor),
