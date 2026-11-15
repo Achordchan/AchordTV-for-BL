@@ -126,6 +126,7 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
     private var nextSourcePage = 1
     private var spaceLastAid: Int?
     private var spaceHasMore = true
+    private var dynamicHasMore = true
     /// 每次切换 UP 主加一；请求返回时代数变了说明结果已过期，直接丢弃（抛 CancellationError，
     /// 基类不会据此追加数据或翻页，也不会弹错误）
     private var selectionGeneration = 0
@@ -180,6 +181,20 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
 
     override func request(page: Int) async throws -> [FollowsVideo] {
         let generation = selectionGeneration
+        do {
+            return try await fetch(page: page, generation: generation)
+        } catch {
+            // 已切换过 UP 主：旧请求的失败也一并丢弃，不能弹错误
+            if generation != selectionGeneration { throw CancellationError() }
+            throw error
+        }
+    }
+
+    override func hasMoreAfterRequest() -> Bool? {
+        selectedMid == nil ? dynamicHasMore : spaceHasMore
+    }
+
+    private func fetch(page: Int, generation: Int) async throws -> [FollowsVideo] {
         if let mid = selectedMid {
             if page == 1 {
                 spaceLastAid = nil
@@ -198,7 +213,9 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
         if page == 1 {
             lastOffset = ""
             nextSourcePage = 1
+            dynamicHasMore = true
         }
+        guard dynamicHasMore else { return [] }
 
         for _ in 0..<6 {
             try Task.checkCancellation()
@@ -208,6 +225,7 @@ final class FollowsGridViewController: StandardVideoCollectionViewController<Fol
             guard generation == selectionGeneration else { throw CancellationError() }
             nextSourcePage += 1
             lastOffset = info.offset
+            dynamicHasMore = info.has_more && info.offset != requestedOffset
             Logger.debug("request page\(nextSourcePage - 1) get count:\(info.videoFeeds.count) next offset:\(info.offset)")
             if !info.videoFeeds.isEmpty || !info.has_more || info.offset == requestedOffset {
                 return info.videoFeeds.map { .dynamic($0) }

@@ -135,10 +135,23 @@ class FeedCollectionViewController: UIViewController {
         vc.setContentScrollView(collectionView)
     }
 
-    func appendData(displayData: [any DisplayData]) {
+    /// 追加一页数据。`hasMore` 为 nil 时按返回条数推断是否到底（不足 pageSize - 5 条即到底）；
+    /// 数据源明确知道是否还有更多时传入，以它为准。
+    func appendData(displayData: [any DisplayData], hasMore: Bool? = nil) {
         isLoading = false
         _displayData.append(contentsOf: displayData.map { AnyDispplayData(data: $0) }.filter({ !_displayData.contains($0) }))
-        if displayData.count < pageSize - 5 || displayData.count == 0 {
+        if let hasMore {
+            guard hasMore else {
+                finished = true
+                return
+            }
+            // 这一批全被过滤掉但后面还有：不会再有新 cell 出现来触发加载，直接继续拉
+            if displayData.isEmpty {
+                isLoading = true
+                loadMore?()
+                return
+            }
+        } else if displayData.count < pageSize - 5 || displayData.count == 0 {
             finished = true
             return
         }

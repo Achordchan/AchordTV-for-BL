@@ -98,4 +98,8 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
         hasMore = res.hasMore
         return res.videos
     }
+
+    override func hasMoreAfterRequest() -> Bool? {
+        hasMore
+    }
 }
