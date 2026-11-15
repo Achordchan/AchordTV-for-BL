@@ -129,9 +129,12 @@ class LivePlayerViewModel {
         requestedQn = qn
         retryCount = 0
         qualitySwitchTask?.cancel()
+        // 在这里同步作废之前的所有取流请求，旧响应即使已在等待提交也不会再播放
+        streamGeneration += 1
+        let generation = streamGeneration
         qualitySwitchTask = Task {
             do {
-                try await initPlayer()
+                try await initPlayer(generation: generation, qn: qn)
                 optionsPlugin?.reloadMenus()
             } catch is CancellationError {
                 // 被更新的切换取代或已撤回
@@ -222,8 +225,13 @@ class LivePlayerViewModel {
 
     /// 按 requestedQn 取流。结果先在本地组装，回到主线程确认仍是最新一次请求后才提交并开始播放；
     /// 被更新的请求取代时抛 CancellationError，不改动任何状态。
-    private func initPlayer() async throws {
+    /// - Parameters:
+    ///   - generation: 调用方已在主线程同步分配的代数（切换清晰度时）；为 nil 时在这里分配
+    ///   - qn: 与 generation 一起确定的清晰度；为 nil 时取 requestedQn
+    private func initPlayer(generation preassigned: Int? = nil, qn requested: Int? = nil) async throws {
+        try Task.checkCancellation()
         let (generation, qn) = await MainActor.run { () -> (Int, Int) in
+            if let preassigned { return (preassigned, requested ?? requestedQn) }
             streamGeneration += 1
             return (streamGeneration, requestedQn)
         }
@@ -270,7 +278,7 @@ class LivePlayerViewModel {
         guard let first = infos.first else { throw LiveError.noPlaybackUrl }
         let resolved = infos
         let committed = await MainActor.run { () -> Bool in
-            guard generation == streamGeneration else { return false }
+            guard generation == streamGeneration, !Task.isCancelled else { return false }
             allPlayInfos = resolved
             playInfos = resolved
             qualityOptions = options
