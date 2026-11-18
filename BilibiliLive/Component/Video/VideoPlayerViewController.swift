@@ -182,7 +182,7 @@ extension VideoSequenceProvider {
     /// 只有一条可播内容时返回 nil。
     nonisolated static func makeSequence(detail: VideoDetail, aid: Int, cid: Int) -> (seq: [PlayInfo], index: Int)? {
         let pages = detail.View.aid == aid ? (detail.View.pages ?? []) : []
-        let pageInfos = pages.map { PlayInfo(aid: aid, cid: $0.cid, title: $0.part) }
+        let pageInfos = pages.map { PlayInfo(aid: aid, cid: $0.cid, title: $0.part, coverURL: detail.pic) }
 
         var episodes = [VideoDetail.Info.UgcSeason.UgcVideoInfo]()
         if let season = detail.View.ugc_season {
@@ -200,7 +200,7 @@ extension VideoSequenceProvider {
                 if episode.aid == aid, pageInfos.count > 1 {
                     seq.append(contentsOf: pageInfos)
                 } else {
-                    seq.append(PlayInfo(aid: episode.aid, cid: episode.cid, title: episode.title))
+                    seq.append(PlayInfo(aid: episode.aid, cid: episode.cid, title: episode.title, coverURL: episode.arc.pic))
                 }
             }
         } else {
@@ -221,7 +221,8 @@ extension VideoSequenceProvider {
                      epid: $0.id,
                      seasonId: bangumi.season_id,
                      subType: current.subType ?? bangumi.type,
-                     title: [$0.title, $0.long_title].filter { !$0.isEmpty }.joined(separator: " "))
+                     title: [$0.title, $0.long_title].filter { !$0.isEmpty }.joined(separator: " "),
+                     coverURL: $0.cover)
         }
         guard seq.count > 1 else { return nil }
         let index = seq.firstIndex(where: { ($0.epid ?? 0) > 0 && $0.epid == current.epid })
@@ -269,6 +270,10 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private var hasRetriedCurrentItem = false
     private var isStopping = false
     private var pendingAutoTriggeredInfoActionKey: String?
+    /// 自动连播的过渡卡片（只在切换期间存在）
+    private var transitionCard: AutoplayTransitionCardView?
+    private var transitionCardIsPlaying = false
+    private var transitionHideWorkItem: DispatchWorkItem?
 
     init(playInfo: PlayInfo,
          playMode: VideoPlayerMode = .regular,
@@ -312,6 +317,9 @@ class VideoPlayerViewController: CommonPlayerViewController {
         }
         viewModel.onShowDetail = { [weak self] info in
             self?.showDetail(for: info)
+        }
+        viewModel.onAutoplayTransition = { [weak self] transition, isUpdate in
+            self?.showAutoplayTransition(transition, isUpdate: isUpdate)
         }
         viewModel.loadResult.receive(on: DispatchQueue.main).sink { [weak self] result in
             switch result {
@@ -379,6 +387,7 @@ class VideoPlayerViewController: CommonPlayerViewController {
     }
 
     override func playerDidStart(player: AVPlayer) {
+        markAutoplayTransitionPlaying()
         switch playMode {
         case .preview:
             onPlaybackStarted?()
@@ -414,6 +423,7 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private func stopAsyncWork() {
         guard !isStopping else { return }
         isStopping = true
+        hideAutoplayTransition(animated: false)
         neighborPreloadTask?.cancel()
         neighborPreloadTask = nil
         viewModel.cancelLoading()
@@ -424,6 +434,7 @@ class VideoPlayerViewController: CommonPlayerViewController {
     }
 
     private func handleLoadFailure(message: String) {
+        hideAutoplayTransition(animated: false)
         switch playMode {
         case .preview:
             onLoadFailure?(message)
@@ -458,6 +469,81 @@ class VideoPlayerViewController: CommonPlayerViewController {
         })
         alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
         present(alert, animated: true)
+    }
+
+    // MARK: - 自动连播过渡卡片
+
+    /// 卡片在发起切换的同一时刻显示，和加载并行，不延迟起播。
+    /// 起播后再停留几秒淡出；迟迟没起播时最多停留 `maxWaitingDuration` 秒。
+    private static let visibleDurationAfterStart: TimeInterval = 4
+    private static let maxWaitingDuration: TimeInterval = 20
+
+    private func showAutoplayTransition(_ transition: AutoplayTransition, isUpdate: Bool) {
+        if let card = transitionCard {
+            card.configure(transition)
+            if !isUpdate {
+                // 又切了一次（例如推荐加载失败改播下一个）：回到「即将播放」
+                transitionCardIsPlaying = false
+                card.setPhase(.upcoming)
+                scheduleAutoplayTransitionHide(after: Self.maxWaitingDuration)
+            }
+            return
+        }
+        // 卡片已经淡出后才到的补全信息不再重新弹出
+        guard !isUpdate else { return }
+
+        let card = AutoplayTransitionCardView()
+        card.configure(transition)
+        card.setPhase(.upcoming)
+        view.addSubview(card)
+        card.snp.makeConstraints { make in
+            make.leading.equalToSuperview().inset(80)
+            make.top.equalToSuperview().inset(60)
+            make.width.equalTo(640)
+        }
+        transitionCard = card
+        transitionCardIsPlaying = false
+        card.alpha = 0
+        card.transform = CGAffineTransform(translationX: -48, y: 0)
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
+            card.alpha = 1
+            card.transform = .identity
+        }
+        scheduleAutoplayTransitionHide(after: Self.maxWaitingDuration)
+    }
+
+    private func markAutoplayTransitionPlaying() {
+        guard let card = transitionCard, !transitionCardIsPlaying else { return }
+        transitionCardIsPlaying = true
+        card.setPhase(.playing)
+        scheduleAutoplayTransitionHide(after: Self.visibleDurationAfterStart)
+    }
+
+    private func scheduleAutoplayTransitionHide(after delay: TimeInterval) {
+        transitionHideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.hideAutoplayTransition(animated: true)
+        }
+        transitionHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func hideAutoplayTransition(animated: Bool) {
+        transitionHideWorkItem?.cancel()
+        transitionHideWorkItem = nil
+        guard let card = transitionCard else { return }
+        transitionCard = nil
+        transitionCardIsPlaying = false
+        guard animated else {
+            card.removeFromSuperview()
+            return
+        }
+        UIView.animate(withDuration: 0.5, animations: {
+            card.alpha = 0
+            card.transform = CGAffineTransform(translationX: -24, y: 0)
+        }, completion: { _ in
+            card.removeFromSuperview()
+        })
     }
 
     private func showDetail(for info: PlayInfo) {

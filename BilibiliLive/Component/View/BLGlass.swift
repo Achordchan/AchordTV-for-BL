@@ -37,7 +37,31 @@ enum BLGlass {
         }
     }
 
+    /// 直接叠在视频画面上的提示底板（状态胶囊、加载提示、连播卡片）。
+    ///
+    /// 不用 `makeView` 的原因：tvOS 26 的 Liquid Glass（`UIGlassEffect`）会按身后画面的亮度自适应，
+    /// 画面是白色时玻璃也变成近白色，`overrideUserInterfaceStyle = .dark` 拦不住，白字因此看不清；
+    /// 再加上浅色描边和玻璃边缘高光，整块看起来就像 tvOS 聚焦时的白色底板（「被选中」）。
+    /// 这里改用不随画面变色的深色模糊 + 黑色压暗层，不加描边，亮 / 暗画面上白字都清楚，
+    /// 也不会被误认为可聚焦控件。
+    static func makeVideoOverlayView(cornerRadius: CGFloat) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+        view.overrideUserInterfaceStyle = .dark
+        view.layer.cornerRadius = cornerRadius
+        view.layer.cornerCurve = .continuous
+        view.clipsToBounds = true
+        let scrim = UIView()
+        scrim.backgroundColor = Color.videoOverlayScrim
+        scrim.isUserInteractionEnabled = false
+        view.contentView.addSubview(scrim)
+        scrim.frame = view.contentView.bounds
+        scrim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        return view
+    }
+
     enum Color {
+        /// 视频浮层底板上的压暗层：保证纯白画面上白字仍有足够对比度
+        static let videoOverlayScrim = UIColor(white: 0, alpha: 0.45)
         /// 玻璃上的主文字
         static let text = UIColor.white
         /// 玻璃上的次要文字
