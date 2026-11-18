@@ -47,7 +47,6 @@ class VideoPlayerViewModel {
     private var loadTask: Task<Void, Never>?
     private var danmuLoadTask: Task<Void, Never>?
     private var loadGeneration = 0
-    private var bangumiSequenceTask: Task<Void, Never>?
     /// 本次播放会话里已经播过（或尝试过）的 aid，自动播相关推荐时跳过，避免 A↔B 来回
     private var playedAids = Set<Int>()
     /// 自动跳到相关推荐后若加载失败，按顺序改试的后备候选（只对该次加载有效）
@@ -84,8 +83,6 @@ class VideoPlayerViewModel {
     }
 
     func cancelLoading() {
-        bangumiSequenceTask?.cancel()
-        bangumiSequenceTask = nil
         danmuLoadTask?.cancel()
         danmuLoadTask = nil
         loadTask?.cancel()
@@ -127,12 +124,14 @@ class VideoPlayerViewModel {
                     await danmuProvider.loadInitialDanmu(startPos: startPos)
                 }
             }
+            // 番剧序列要在生成插件前就位（播放列表插件创建时捕获 provider），这里等它返回
+            let bangumiSequence = await loadBangumiSequenceIfNeeded(for: resolvedPlayInfo)
             guard !Task.isCancelled, loadGeneration == generation else { return }
 
             playInfo = resolvedPlayInfo
             videoDetail = data.detail
             playedAids.insert(resolvedPlayInfo.aid)
-            buildSequenceIfNeeded(for: resolvedPlayInfo, data: data)
+            updateSequence(for: resolvedPlayInfo, data: data, bangumiSequence: bangumiSequence)
             BiliBiliUpnpDMR.shared.sendVideoSwitch(aid: resolvedPlayInfo.aid, cid: data.cid)
             cancellable.removeAll()
             let plugins = generatePlayerPlugin(data,
@@ -286,27 +285,38 @@ class VideoPlayerViewModel {
     // MARK: - 连续播放
 
     /// 普通播放没有外部传入序列时（例如「不显示详情页直接进入视频」、自动跳到相关推荐），
-    /// 根据已加载的详情自行构建分 P / 合集 / 番剧序列。
-    /// 必须在生成插件之前同步完成普通视频的序列，因为插件创建时会捕获 provider。
-    private func buildSequenceIfNeeded(for info: PlayInfo, data: PlayerDetailData) {
-        guard playMode == .regular, sequenceProvider == nil else { return }
+    /// 番剧需要先拉取剧集列表。其余情况返回 nil，不发请求。
+    private func loadBangumiSequenceIfNeeded(for info: PlayInfo) async -> (seq: [PlayInfo], index: Int)? {
+        guard playMode == .regular, sequenceProvider == nil, info.isBangumi else { return nil }
+        let bangumi: BangumiInfo?
+        if let epid = info.epid, epid > 0 {
+            bangumi = try? await WebRequest.requestBangumiInfo(epid: epid)
+        } else if let seasonId = info.seasonId, seasonId > 0 {
+            bangumi = try? await WebRequest.requestBangumiInfo(seasonID: seasonId)
+        } else {
+            bangumi = nil
+        }
+        return bangumi.flatMap { VideoSequenceProvider.makeSequence(bangumi: $0, current: info) }
+    }
+
+    /// 生成插件前同步整理续播序列（插件创建时会捕获 provider）：
+    /// - 没有序列时，按详情自行构建分 P / 合集序列（番剧用上面预先拉到的剧集列表）；
+    /// - 已有序列且播到合集里的多 P 视频时，把这一条展开成各个分 P。
+    /// 只作用于普通播放，沉浸式 Feed 的序列由 FeedFlowBrowserViewController 按索引管理，不能改动。
+    private func updateSequence(for info: PlayInfo, data: PlayerDetailData, bangumiSequence: (seq: [PlayInfo], index: Int)?) {
+        guard playMode == .regular else { return }
+        if let sequenceProvider {
+            guard !info.isBangumi,
+                  let detail = data.detail, detail.View.aid == info.aid,
+                  let pages = detail.View.pages, pages.count > 1
+            else { return }
+            sequenceProvider.expandCurrent(into: pages.map { PlayInfo(aid: info.aid, cid: $0.cid, title: $0.part) },
+                                           currentCid: data.cid)
+            return
+        }
         if info.isBangumi {
-            let generation = loadGeneration
-            bangumiSequenceTask?.cancel()
-            bangumiSequenceTask = Task { [weak self] in
-                let bangumi: BangumiInfo?
-                if let epid = info.epid, epid > 0 {
-                    bangumi = try? await WebRequest.requestBangumiInfo(epid: epid)
-                } else if let seasonId = info.seasonId, seasonId > 0 {
-                    bangumi = try? await WebRequest.requestBangumiInfo(seasonID: seasonId)
-                } else {
-                    bangumi = nil
-                }
-                guard let self, let bangumi, !Task.isCancelled,
-                      self.loadGeneration == generation, self.sequenceProvider == nil,
-                      let built = VideoSequenceProvider.makeSequence(bangumi: bangumi, current: info)
-                else { return }
-                self.sequenceProvider = VideoSequenceProvider(seq: built.seq, currentIndex: built.index)
+            if let bangumiSequence {
+                sequenceProvider = VideoSequenceProvider(seq: bangumiSequence.seq, currentIndex: bangumiSequence.index)
             }
         } else if let detail = data.detail,
                   let built = VideoSequenceProvider.makeSequence(detail: detail, aid: info.aid, cid: data.cid)

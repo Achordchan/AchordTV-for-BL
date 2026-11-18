@@ -151,6 +151,24 @@ final class VideoSequenceProvider {
         await onNeedMore?()
     }
 
+    /// 序列走到合集里的一个多 P 视频时，把这一条替换成它的各个分 P。
+    /// 该 aid 在序列里已经不止一条（已展开过）或正在播临时插入的视频时不处理。
+    func expandCurrent(into pages: [PlayInfo], currentCid: Int) {
+        guard temporaryOverrides.isEmpty,
+              pages.count > 1,
+              playSeq.indices.contains(currentIndex)
+        else { return }
+        let aid = playSeq[currentIndex].aid
+        guard pages.allSatisfy({ $0.aid == aid }),
+              playSeq.filter({ $0.aid == aid }).count == 1
+        else { return }
+        let existingKeys = Set(playSeq.map(\.sequenceKey))
+        let newPages = pages.filter { !existingKeys.contains($0.sequenceKey) || $0.cid == playSeq[currentIndex].cid }
+        guard newPages.count > 1 else { return }
+        playSeq.replaceSubrange(currentIndex...currentIndex, with: newPages)
+        currentIndex += newPages.firstIndex(where: { $0.cid == currentCid }) ?? 0
+    }
+
     /// 回到序列第一条（循环播放用），返回第一条
     func restart() -> PlayInfo? {
         clearTemporaryOverrides()
