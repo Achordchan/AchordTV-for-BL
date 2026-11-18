@@ -10,6 +10,7 @@ import AVKit
 class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
     private let nextActionIdentifierPrefix = "play.next"
     private weak var playerVC: AVPlayerViewController?
+    var onPlayerDidStart: (() -> Void)?
     var onPlayerDidEnd: ((AVPlayer) -> Void)?
     var onPlayNextWithInfo: ((PlayInfo) -> Void)?
     var onShowCurrentDetail: ((PlayInfo) -> Void)?
@@ -70,6 +71,10 @@ class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
 
         PlayerMenu.appendToMore(actions, current: &current)
         return []
+    }
+
+    func playerDidStart(player: AVPlayer) {
+        onPlayerDidStart?()
     }
 
     /// 播完后的去向（下一集 / 循环 / 相关推荐 / 退出）统一由 VideoPlayerViewModel 决定

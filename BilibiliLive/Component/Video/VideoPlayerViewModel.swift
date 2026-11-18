@@ -335,7 +335,8 @@ class VideoPlayerViewModel {
             return
         }
 
-        if playMode == .regular, Settings.continouslyPlayRelated {
+        // 关掉「连续播放」时，还有下一集就不跳去推荐（开关含义是「没有下一集时」）
+        if playMode == .regular, Settings.continouslyPlayRelated, sequenceProvider?.hasNext != true {
             let candidates = relatedCandidates()
             if let next = candidates.first {
                 Logger.info("[autoplay] 序列已播完，继续播放相关推荐 aid \(next.aid)")
@@ -349,9 +350,10 @@ class VideoPlayerViewModel {
         }
     }
 
-    /// 当前视频详情里的相关推荐，去掉本次已播过的和番剧跳转条目
+    /// 当前视频详情里的相关推荐，去掉本次已播过的和番剧跳转条目。
+    /// 番剧/电影播完不接推荐，与详情页对番剧隐藏推荐区保持一致。
     private func relatedCandidates() -> [PlayInfo] {
-        guard let detail = videoDetail, detail.View.aid == playInfo.aid else { return [] }
+        guard !playInfo.isBangumi, let detail = videoDetail, detail.View.aid == playInfo.aid else { return [] }
         var seen = playedAids
         return detail.Related.compactMap { info -> PlayInfo? in
             guard info.aid > 0, info.redirect_url == nil, seen.insert(info.aid).inserted else { return nil }
@@ -442,6 +444,12 @@ class VideoPlayerViewModel {
         }.store(in: &cancellable)
 
         let playlist = VideoPlayListPlugin(sequenceProvider: sequenceProvider)
+        playlist.onPlayerDidStart = { [weak self] in
+            // 推荐视频已经开始播放：后备候选只用于「加载失败」，起播后清空，
+            // 避免之后切画质失败之类的错误被静默换成下一条推荐
+            self?.relatedFallbacks.removeAll()
+            self?.relatedFallbackGeneration = nil
+        }
         playlist.onPlayerDidEnd = { [weak self] player in
             Task { @MainActor [weak self] in
                 await self?.handlePlaybackEnded(player: player)
