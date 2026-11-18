@@ -47,6 +47,7 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
     /// 加载提示由播放器状态的 KVO 驱动（不等 1 秒定时器），起播 / 拖动结束后立即收起
     private var playerObservation: NSKeyValueObservation?
     private var timeControlObservation: NSKeyValueObservation?
+    private var currentItemObservation: NSKeyValueObservation?
     private var itemStatusObservation: NSKeyValueObservation?
     private var showLoadingWorkItem: DispatchWorkItem?
     private var isLoadingShown = false
@@ -185,6 +186,7 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
 
     private func observe(player: AVPlayer?) {
         timeControlObservation = nil
+        currentItemObservation = nil
         itemStatusObservation = nil
         guard let player else {
             refreshLoading()
@@ -193,9 +195,16 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
         timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.refreshLoading() }
         }
-        itemStatusObservation = player.observe(\.currentItem?.status, options: [.initial, .new]) { [weak self] _, _ in
+        currentItemObservation = player.observe(\.currentItem, options: [.initial, .new]) { [weak self] player, _ in
+            DispatchQueue.main.async { self?.observe(item: player.currentItem) }
+        }
+    }
+
+    private func observe(item: AVPlayerItem?) {
+        itemStatusObservation = item?.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.refreshLoading() }
         }
+        refreshLoading()
     }
 
     private var isPlayerLoading: Bool {

@@ -175,7 +175,7 @@ final class AutoplayTransitionCardView: UIView {
         badgeLabel.text = kind.badgeTitle
 
         let title = transition.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = (title?.isEmpty == false) ? title : "加载中…"
+        titleLabel.text = (title?.isEmpty == false) ? title : "下一个视频"
         let subtitle = transition.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle?.isEmpty ?? true
@@ -210,5 +210,91 @@ final class AutoplayTransitionCardView: UIView {
                 self?.coverPlaceholder.isHidden = true
             }
         }
+    }
+}
+
+/// 管理过渡卡片的出现与淡出：切换发起时立即显示（与加载并行，不延迟起播），
+/// 起播后再停留几秒淡出；迟迟没起播时最多停留 `maxWaitingDuration` 秒。
+@MainActor
+final class AutoplayTransitionPresenter {
+    static let visibleDurationAfterStart: TimeInterval = 4
+    static let maxWaitingDuration: TimeInterval = 20
+
+    private weak var hostView: UIView?
+    private var card: AutoplayTransitionCardView?
+    private var isPlaying = false
+    private var hideWorkItem: DispatchWorkItem?
+
+    init(hostView: UIView) {
+        self.hostView = hostView
+    }
+
+    func show(_ transition: AutoplayTransition, isUpdate: Bool) {
+        if let card {
+            card.configure(transition)
+            if !isUpdate {
+                // 又切了一次（例如推荐加载失败改播下一个）：回到「即将播放」
+                isPlaying = false
+                card.setPhase(.upcoming)
+                scheduleHide(after: Self.maxWaitingDuration)
+            }
+            return
+        }
+        // 卡片已经淡出后才到的补全信息不再重新弹出
+        guard !isUpdate, let hostView else { return }
+
+        let card = AutoplayTransitionCardView()
+        card.configure(transition)
+        card.setPhase(.upcoming)
+        hostView.addSubview(card)
+        card.snp.makeConstraints { make in
+            make.leading.equalToSuperview().inset(80)
+            make.top.equalToSuperview().inset(60)
+            make.width.equalTo(640)
+        }
+        self.card = card
+        isPlaying = false
+        card.alpha = 0
+        card.transform = CGAffineTransform(translationX: -48, y: 0)
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
+            card.alpha = 1
+            card.transform = .identity
+        }
+        scheduleHide(after: Self.maxWaitingDuration)
+    }
+
+    /// 新视频开始播放
+    func markPlaying() {
+        guard let card, !isPlaying else { return }
+        isPlaying = true
+        card.setPhase(.playing)
+        scheduleHide(after: Self.visibleDurationAfterStart)
+    }
+
+    func hide(animated: Bool) {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        guard let card else { return }
+        self.card = nil
+        isPlaying = false
+        guard animated else {
+            card.removeFromSuperview()
+            return
+        }
+        UIView.animate(withDuration: 0.5, animations: {
+            card.alpha = 0
+            card.transform = CGAffineTransform(translationX: -24, y: 0)
+        }, completion: { _ in
+            card.removeFromSuperview()
+        })
+    }
+
+    private func scheduleHide(after delay: TimeInterval) {
+        hideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.hide(animated: true)
+        }
+        hideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 }
