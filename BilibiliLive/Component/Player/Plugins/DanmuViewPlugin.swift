@@ -185,7 +185,17 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
         { [weak self] size in
             // 字号只影响之后发出的弹幕；轨道高度随之调整
             Settings.danmuSize = size
-            self?.danMuView.trackHeight = Self.trackHeight(for: size)
+            guard let self else {
+                refreshMenus()
+                return
+            }
+            let height = Self.trackHeight(for: size)
+            if height != danMuView.trackHeight {
+                // 屏上弹幕保留旧字号，轨道间距变了会和相邻轨道重叠（暂停时会一直叠着），
+                // 所以先清掉，之后发出的弹幕按新字号和新轨道显示
+                danMuView.clean()
+                danMuView.trackHeight = height
+            }
             refreshMenus()
         }
         let levelMenu = Self.choiceMenu(title: "智能屏蔽", image: "shield.lefthalf.filled",
