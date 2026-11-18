@@ -304,7 +304,7 @@ final class PersonalProfileCell: BLMotionCollectionViewCell {
     private let focusFillView = UIView()
     private let avatarView = UIImageView()
     private let nameLabel = UILabel()
-    private let vipBadge = VipBadgeView(fontSize: 20)
+    private let vipBadge = VipBadgeView(fontSize: 18)
     private let hintLabel = UILabel()
     private let chevronView = UIImageView(image: UIImage(systemName: "chevron.right"))
 
@@ -334,17 +334,14 @@ final class PersonalProfileCell: BLMotionCollectionViewCell {
             make.width.height.equalTo(80)
         }
 
+        // 大会员标识压在头像底边，名字独占一行不被挤
+        vipBadge.attach(below: avatarView, in: glassView.contentView)
+
         nameLabel.font = BLFont.sectionTitle
         nameLabel.lineBreakMode = .byTruncatingTail
         hintLabel.font = BLFont.subtitle
 
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let nameRow = UIStackView(arrangedSubviews: [nameLabel, vipBadge])
-        nameRow.axis = .horizontal
-        nameRow.alignment = .center
-        nameRow.spacing = 12
-
-        let textStack = UIStackView(arrangedSubviews: [nameRow, hintLabel])
+        let textStack = UIStackView(arrangedSubviews: [nameLabel, hintLabel])
         textStack.axis = .vertical
         textStack.spacing = 6
         glassView.contentView.addSubview(textStack)

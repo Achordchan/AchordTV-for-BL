@@ -174,7 +174,7 @@ private final class AccountSwitcherCell: UICollectionViewCell {
     private let avatarView = UIImageView()
     private let nameLabel = UILabel()
     private let badgeLabel = UILabel()
-    private let vipBadge = VipBadgeView(fontSize: 22)
+    private let vipBadge = VipBadgeView(fontSize: 24)
     private let background = UIView()
 
     override init(frame: CGRect) {
@@ -228,15 +228,11 @@ private final class AccountSwitcherCell: UICollectionViewCell {
         badgeLabel.textAlignment = .center
         badgeLabel.isHidden = true
 
-        let badgeRow = UIStackView(arrangedSubviews: [vipBadge, badgeLabel])
-        badgeRow.translatesAutoresizingMaskIntoConstraints = false
-        badgeRow.axis = .horizontal
-        badgeRow.alignment = .center
-        badgeRow.spacing = 12
-
         background.addSubview(avatarView)
         background.addSubview(nameLabel)
-        background.addSubview(badgeRow)
+        background.addSubview(badgeLabel)
+        // 大会员标识压在头像底边；名字下方只留「当前使用」
+        vipBadge.attach(below: avatarView, in: background)
 
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -249,18 +245,17 @@ private final class AccountSwitcherCell: UICollectionViewCell {
             avatarView.widthAnchor.constraint(equalToConstant: 140),
             avatarView.heightAnchor.constraint(equalTo: avatarView.widthAnchor),
 
-            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 20),
+            // 给压在头像底边的大会员标识留出位置
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 34),
             nameLabel.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
             nameLabel.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
 
-            badgeRow.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 16),
-            badgeRow.centerXAnchor.constraint(equalTo: background.centerXAnchor),
-            badgeRow.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 16),
+            badgeLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 16),
+            badgeLabel.centerXAnchor.constraint(equalTo: background.centerXAnchor),
             badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
             badgeLabel.heightAnchor.constraint(equalToConstant: 40),
-            vipBadge.heightAnchor.constraint(equalToConstant: 40),
             // 标签与卡片底边至少留出 28pt，不贴边
-            badgeRow.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -28),
+            badgeLabel.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -28),
         ])
     }
 
