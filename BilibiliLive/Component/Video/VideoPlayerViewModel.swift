@@ -5,6 +5,7 @@
 //  Created by yicheng on 2024/5/23.
 //
 
+import AVFoundation
 import Combine
 import UIKit
 
@@ -46,6 +47,11 @@ class VideoPlayerViewModel {
     private var loadTask: Task<Void, Never>?
     private var danmuLoadTask: Task<Void, Never>?
     private var loadGeneration = 0
+    /// 本次播放会话里已经播过（或尝试过）的 aid，自动播相关推荐时跳过，避免 A↔B 来回
+    private var playedAids = Set<Int>()
+    /// 自动跳到相关推荐后若加载失败，按顺序改试的后备候选（只对该次加载有效）
+    private var relatedFallbacks = [PlayInfo]()
+    private var relatedFallbackGeneration: Int?
 
     init(playInfo: PlayInfo,
          playMode: VideoPlayerMode = .regular,
@@ -118,10 +124,14 @@ class VideoPlayerViewModel {
                     await danmuProvider.loadInitialDanmu(startPos: startPos)
                 }
             }
+            // 番剧序列要在生成插件前就位（播放列表插件创建时捕获 provider），这里等它返回
+            let bangumiSequence = await loadBangumiSequenceIfNeeded(for: resolvedPlayInfo)
             guard !Task.isCancelled, loadGeneration == generation else { return }
 
             playInfo = resolvedPlayInfo
             videoDetail = data.detail
+            playedAids.insert(resolvedPlayInfo.aid)
+            updateSequence(for: resolvedPlayInfo, data: data, bangumiSequence: bangumiSequence)
             BiliBiliUpnpDMR.shared.sendVideoSwitch(aid: resolvedPlayInfo.aid, cid: data.cid)
             cancellable.removeAll()
             let plugins = generatePlayerPlugin(data,
@@ -133,8 +143,19 @@ class VideoPlayerViewModel {
             return
         } catch let err {
             guard !Task.isCancelled, loadGeneration == generation else { return }
-            loadResult.send(.failure(err.localizedDescription))
+            reportLoadFailure(err.localizedDescription)
         }
+    }
+
+    /// 加载失败：若是自动跳到的相关推荐，改试下一个候选；否则照常上报
+    private func reportLoadFailure(_ message: String) {
+        if relatedFallbackGeneration == loadGeneration, !relatedFallbacks.isEmpty {
+            let next = relatedFallbacks.removeFirst()
+            Logger.info("[autoplay] 相关推荐加载失败（\(message)），改播 aid \(next.aid)")
+            playRelated(next, fallbacks: relatedFallbacks)
+            return
+        }
+        loadResult.send(.failure(message))
     }
 
     private func loadVideoInfo(for playInfo: PlayInfo) async throws -> (PlayInfo, PlayerDetailData) {
@@ -261,6 +282,108 @@ class VideoPlayerViewModel {
         load()
     }
 
+    // MARK: - 连续播放
+
+    /// 普通播放没有外部传入序列时（例如「不显示详情页直接进入视频」、自动跳到相关推荐），
+    /// 番剧需要先拉取剧集列表。其余情况返回 nil，不发请求。
+    private func loadBangumiSequenceIfNeeded(for info: PlayInfo) async -> (seq: [PlayInfo], index: Int)? {
+        guard playMode == .regular, sequenceProvider == nil, info.isBangumi else { return nil }
+        let bangumi: BangumiInfo?
+        if let epid = info.epid, epid > 0 {
+            bangumi = try? await WebRequest.requestBangumiInfo(epid: epid)
+        } else if let seasonId = info.seasonId, seasonId > 0 {
+            bangumi = try? await WebRequest.requestBangumiInfo(seasonID: seasonId)
+        } else {
+            bangumi = nil
+        }
+        return bangumi.flatMap { VideoSequenceProvider.makeSequence(bangumi: $0, current: info) }
+    }
+
+    /// 生成插件前同步整理续播序列（插件创建时会捕获 provider）：
+    /// - 没有序列时，按详情自行构建分 P / 合集序列（番剧用上面预先拉到的剧集列表）；
+    /// - 已有序列且播到合集里的多 P 视频时，把这一条展开成各个分 P。
+    /// 只作用于普通播放，沉浸式 Feed 的序列由 FeedFlowBrowserViewController 按索引管理，不能改动。
+    private func updateSequence(for info: PlayInfo, data: PlayerDetailData, bangumiSequence: (seq: [PlayInfo], index: Int)?) {
+        guard playMode == .regular else { return }
+        if let sequenceProvider {
+            guard !info.isBangumi,
+                  let detail = data.detail, detail.View.aid == info.aid,
+                  let pages = detail.View.pages, pages.count > 1
+            else { return }
+            sequenceProvider.expandCurrent(into: pages.map { PlayInfo(aid: info.aid, cid: $0.cid, title: $0.part) },
+                                           currentCid: data.cid)
+            return
+        }
+        if info.isBangumi {
+            if let bangumiSequence {
+                sequenceProvider = VideoSequenceProvider(seq: bangumiSequence.seq, currentIndex: bangumiSequence.index)
+            }
+        } else if let detail = data.detail,
+                  let built = VideoSequenceProvider.makeSequence(detail: detail, aid: info.aid, cid: data.cid)
+        {
+            sequenceProvider = VideoSequenceProvider(seq: built.seq, currentIndex: built.index)
+        }
+    }
+
+    /// 播放结束后的去向：序列下一条 → 循环 → 相关推荐 → 退出
+    private func handlePlaybackEnded(player: AVPlayer) async {
+        let autoAdvance = playMode == .feedFlow || Settings.continouslyPlay
+        if autoAdvance, await playNextFromSequence() {
+            return
+        }
+
+        if Settings.loopPlay {
+            if autoAdvance, let provider = sequenceProvider, provider.count > 1,
+               let first = provider.restart(),
+               first.sequenceKey != currentPlayInfo.sequenceKey
+            {
+                updatePlayInfo(first)
+            } else {
+                _ = await player.seek(to: .zero)
+                player.play()
+            }
+            return
+        }
+
+        // 关掉「连续播放」时，还有下一集就不跳去推荐（开关含义是「没有下一集时」）
+        if playMode == .regular, Settings.continouslyPlayRelated, sequenceProvider?.hasNext != true {
+            let candidates = relatedCandidates()
+            if let next = candidates.first {
+                Logger.info("[autoplay] 序列已播完，继续播放相关推荐 aid \(next.aid)")
+                playRelated(next, fallbacks: Array(candidates.dropFirst().prefix(2)))
+                return
+            }
+        }
+
+        if playMode == .regular {
+            onExit?()
+        }
+    }
+
+    /// 当前视频详情里的相关推荐，去掉本次已播过的和番剧跳转条目。
+    /// 番剧/电影播完不接推荐，与详情页对番剧隐藏推荐区保持一致。
+    private func relatedCandidates() -> [PlayInfo] {
+        guard !playInfo.isBangumi, let detail = videoDetail, detail.View.aid == playInfo.aid else { return [] }
+        var seen = playedAids
+        return detail.Related.compactMap { info -> PlayInfo? in
+            guard info.aid > 0, info.redirect_url == nil, seen.insert(info.aid).inserted else { return nil }
+            return PlayInfo(aid: info.aid,
+                            cid: info.cid,
+                            title: info.title,
+                            ownerName: info.ownerName,
+                            coverURL: info.pic)
+        }
+    }
+
+    private func playRelated(_ info: PlayInfo, fallbacks: [PlayInfo]) {
+        playedAids.insert(info.aid)
+        // 换到另一个视频：丢掉旧序列，加载后按新视频的分 P / 合集重新构建
+        sequenceProvider = nil
+        updatePlayInfo(info)
+        relatedFallbacks = fallbacks
+        relatedFallbackGeneration = loadGeneration
+    }
+
     func playNextFromSequence() async -> Bool {
         guard let next = await sequenceProvider?.moveNext() else { return false }
         updatePlayInfo(next)
@@ -312,7 +435,7 @@ class VideoPlayerViewModel {
                                           isMuted: playMode == .preview && previewMuted,
                                           mediaWarmupManager: playMode == .feedFlow ? mediaWarmupManager : nil)
         playplugin.onLoadFailure = { [weak self] message in
-            self?.loadResult.send(.failure(message))
+            self?.reportLoadFailure(message)
         }
 
         if playMode == .preview {
@@ -331,9 +454,16 @@ class VideoPlayerViewModel {
         }.store(in: &cancellable)
 
         let playlist = VideoPlayListPlugin(sequenceProvider: sequenceProvider)
-        playlist.onPlayEnd = { [weak self] in
-            guard self?.playMode == .regular else { return }
-            self?.onExit?()
+        playlist.onPlayerDidStart = { [weak self] in
+            // 推荐视频已经开始播放：后备候选只用于「加载失败」，起播后清空，
+            // 避免之后切画质失败之类的错误被静默换成下一条推荐
+            self?.relatedFallbacks.removeAll()
+            self?.relatedFallbackGeneration = nil
+        }
+        playlist.onPlayerDidEnd = { [weak self] player in
+            Task { @MainActor [weak self] in
+                await self?.handlePlaybackEnded(player: player)
+            }
         }
         playlist.onPlayNextWithInfo = {
             [weak self] info in

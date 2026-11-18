@@ -530,19 +530,20 @@ class VideoDetailViewController: UIViewController {
     @IBAction func actionPlay(_ sender: Any) {
         let player = VideoPlayerViewController(playInfo: PlayInfo(aid: aid, cid: cid, epid: epid, seasonId: seasonId, subType: subType, lastPlayCid: lastPlayCid, playTimeInSecond: playTimeInSecond, title: data?.title))
         player.data = data
-        if pages.count > 0, let index = pages.firstIndex(where: { $0.cid == cid }) {
-            let seq = pages.map({ PlayInfo(aid: aid, cid: $0.cid, epid: $0.epid, seasonId: seasonId, subType: subType, title: $0.part) })
-            if seq.count > 0 {
-                player.sequenceProvider = VideoSequenceProvider(seq: seq, currentIndex: index)
-            }
-        }
-        if allUgcEpisodes.count > 0, let index = allUgcEpisodes.firstIndex(where: { $0.cid == cid }) {
-            let seq = allUgcEpisodes.map({ PlayInfo(aid: $0.aid, cid: $0.cid, title: $0.title) })
-            if seq.count > 0 {
-                player.sequenceProvider = VideoSequenceProvider(seq: seq, currentIndex: index)
-            }
-        }
+        player.sequenceProvider = makeSequenceProvider(cid: cid)
         present(player, animated: true, completion: nil)
+    }
+
+    /// 播放器的续播序列：番剧用剧集列表，普通视频用合集/分 P（与播放器内自动构建共用同一逻辑）
+    private func makeSequenceProvider(cid: Int) -> VideoSequenceProvider? {
+        if isBangumi {
+            guard pages.count > 1, let index = pages.firstIndex(where: { $0.cid == cid }) else { return nil }
+            // 番剧每集 aid 不同（存在 VideoPage.page 里），不能沿用当前集的 aid
+            let seq = pages.map { PlayInfo(aid: $0.page, cid: $0.cid, epid: $0.epid, seasonId: seasonId, subType: subType, title: $0.part) }
+            return VideoSequenceProvider(seq: seq, currentIndex: index)
+        }
+        guard let data, let built = VideoSequenceProvider.makeSequence(detail: data, aid: aid, cid: cid) else { return nil }
+        return VideoSequenceProvider(seq: built.seq, currentIndex: built.index)
     }
 
     @IBAction func actionLike(_ sender: Any) {
@@ -636,10 +637,7 @@ extension VideoDetailViewController: UICollectionViewDelegate {
             let player = VideoPlayerViewController(playInfo: PlayInfo(aid: isBangumi ? page.page : aid, cid: page.cid, epid: page.epid, seasonId: seasonId, subType: subType, lastPlayCid: lastPlayCid, playTimeInSecond: playTimeInSecond, title: page.part))
             player.data = isBangumi ? nil : data
 
-            let seq = pages.map({ PlayInfo(aid: isBangumi ? $0.page : aid, cid: $0.cid, epid: $0.epid, seasonId: seasonId, subType: subType, title: $0.part) })
-            if seq.count > 0 {
-                player.sequenceProvider = VideoSequenceProvider(seq: seq, currentIndex: indexPath.item)
-            }
+            player.sequenceProvider = makeSequenceProvider(cid: page.cid)
             present(player, animated: true, completion: nil)
         case replysCollectionView:
             guard let reply = replys?.replies?[indexPath.item] else { return }

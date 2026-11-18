@@ -252,6 +252,8 @@ actor MediaRangeDownloader {
     private let referer: String
     private let userAgent: String
     private let mode: MediaTransportMode
+    /// PCDN（P2P 节点）host：速度和可用性波动大，只作重试/竞速兜底，不参与首轮轮转。
+    private let pcdnHosts: Set<String>
 
     private var hostStats = [String: CDNHostStats]()
     private var knownTotalLength: Int64?
@@ -285,6 +287,7 @@ actor MediaRangeDownloader {
         self.referer = referer
         self.userAgent = userAgent
         self.mode = mode
+        pcdnHosts = Set(candidates.filter(BVideoUrlUtils.isPCDN).compactMap { URLComponents(string: $0)?.host })
     }
 
     deinit {
@@ -548,11 +551,16 @@ actor MediaRangeDownloader {
 
     /// 子区间首选 host 轮转：把第 index 个子区间优先分配给第 (index % hosts) 个 host，
     /// 使首轮并发即分散到不同 CDN，实现聚合；之后按实测统计排序。
+    /// 只在未隔离的普通 CDN 之间轮转：按序交付时任何一块落到慢节点都会拖住后续所有块，
+    /// 因此 PCDN 和隔离中的 host 只排在末尾作重试兜底。
     private func hostsForSubrange(_ index: Int) -> [String] {
         let base = orderedHosts()
         guard base.count > 1 else { return base }
-        let r = index % base.count
-        return Array(base[r...] + base[..<r])
+        let primaries = base.filter { !pcdnHosts.contains($0) && !(hostStats[$0]?.isIsolated ?? false) }
+        guard primaries.count > 1 else { return base }
+        let r = index % primaries.count
+        let rotated = Array(primaries[r...] + primaries[..<r])
+        return rotated + base.filter { !rotated.contains($0) }
     }
 
     /// AIMD：干净成功（无新增失败、无竞速）则 +1 试探；失败则减半。
@@ -908,13 +916,16 @@ actor MediaRangeDownloader {
                 hosts.append(host)
             }
         }
-        // 隔离中的 host 沉底；其余按实测吞吐降序，TTFB 小者优先
+        // 隔离中的 host 沉底，PCDN 次之；其余按实测吞吐降序，TTFB 小者优先
         return hosts.sorted { a, b in
             let sa = hostStats[a]
             let sb = hostStats[b]
             let aIso = sa?.isIsolated ?? false
             let bIso = sb?.isIsolated ?? false
             if aIso != bIso { return !aIso }
+            let aPCDN = pcdnHosts.contains(a)
+            let bPCDN = pcdnHosts.contains(b)
+            if aPCDN != bPCDN { return !aPCDN }
             let aMbps = sa?.estimatedMbps ?? -1
             let bMbps = sb?.estimatedMbps ?? -1
             if aMbps != bMbps { return aMbps > bMbps }
@@ -1032,30 +1043,25 @@ actor MediaRangeDownloader {
                 throw MediaRangeError.unsatisfiable(total: total)
             }
         }
-        // 逐字节读取，测量有效吞吐；重复下载字节不计入有效吞吐由上层 extraBytes 区分
-        var data = Data()
-        data.reserveCapacity(Int(subrange.length))
+        // 读取 body 必须在 actor 之外进行：AsyncBytes 的 next() 是 nonisolated async，
+        // 在 actor 方法里逐字节迭代时每个字节都要离开再回到 actor 执行器，
+        // 同一媒体的所有并发子请求还会在该 actor 上互相排队。实测（M 系列 Mac）
+        // 单路约 7MB/s、4 路并发合计约 1MB/s，远低于 4K/HDR 码率，是加速模式反而更慢的主因。
+        // 移到 nonisolated 函数后同样的循环约 85MB/s。
+        let data: Data
         do {
-            for try await byte in asyncBytes {
-                data.append(byte)
-                if Task.isCancelled {
-                    throw CancellationError()
-                }
-                // 背压：单个子区间在内存中完整组装（已受 subrangeMaxBytes 与
-                // singleRequestMemoryCap 约束），此处不做额外限流
-                if Int64(data.count) > subrange.length {
-                    await recordFailure(host: host, category: .mismatch)
-                    throw MediaRangeError.mismatch
-                }
-            }
-        } catch is CancellationError {
+            data = try await Self.readBody(asyncBytes, expectedLength: subrange.length)
+        } catch let BodyReadError.cancelled(partial) {
             // 被取消前已传输的字节计入 extra（上游流量真实发生但未交付），
             // 保证诊断的冗余比例可信；取消本身不计入 CDN 健康失败。
-            addExtra(Int64(data.count))
+            addExtra(Int64(partial))
             throw CancellationError()
-        } catch {
+        } catch BodyReadError.overflow {
+            await recordFailure(host: host, category: .mismatch)
+            throw MediaRangeError.mismatch
+        } catch let BodyReadError.interrupted(partial) {
             // 传输中断前已读取的部分同样计入 extra（未交付的上游流量）
-            addExtra(Int64(data.count))
+            addExtra(Int64(partial))
             await recordFailure(host: host, category: .truncated)
             throw MediaRangeError.truncated
         }
@@ -1066,6 +1072,44 @@ actor MediaRangeDownloader {
         }
         let transferTime = Date().timeIntervalSince(startDate)
         await recordSuccess(host: host, bytes: Int64(data.count), ttfb: ttfb, transferTime: transferTime)
+        return data
+    }
+
+    private enum BodyReadError: Error {
+        case cancelled(partial: Int)
+        case overflow
+        case interrupted(partial: Int)
+    }
+
+    /// 在 actor 之外读取响应体（见 fetchAttempt 中的说明）。
+    /// 单个子区间在内存中完整组装（已受 subrangeMaxBytes 与 singleRequestMemoryCap 约束）。
+    /// 被取消的竞速落选方（URLError.cancelled）按取消处理，不计入节点失败。
+    private nonisolated static func readBody(_ bytes: URLSession.AsyncBytes, expectedLength: Int64) async throws -> Data {
+        var data = Data()
+        data.reserveCapacity(Int(expectedLength))
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if Int64(data.count) > expectedLength {
+                    throw BodyReadError.overflow
+                }
+                if data.count & 0xFFFF == 0, Task.isCancelled {
+                    throw BodyReadError.cancelled(partial: data.count)
+                }
+            }
+        } catch let error as BodyReadError {
+            throw error
+        } catch let error as URLError where error.code == .cancelled {
+            throw BodyReadError.cancelled(partial: data.count)
+        } catch {
+            if error is CancellationError || Task.isCancelled {
+                throw BodyReadError.cancelled(partial: data.count)
+            }
+            throw BodyReadError.interrupted(partial: data.count)
+        }
+        if Task.isCancelled {
+            throw BodyReadError.cancelled(partial: data.count)
+        }
         return data
     }
 

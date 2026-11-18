@@ -150,6 +150,85 @@ final class VideoSequenceProvider {
         guard count - currentIndex - 1 < preloadThreshold else { return }
         await onNeedMore?()
     }
+
+    /// 序列走到合集里的一个多 P 视频时，把这一条替换成它的各个分 P。
+    /// 该 aid 在序列里已经不止一条（已展开过）或正在播临时插入的视频时不处理。
+    func expandCurrent(into pages: [PlayInfo], currentCid: Int) {
+        guard temporaryOverrides.isEmpty,
+              pages.count > 1,
+              playSeq.indices.contains(currentIndex)
+        else { return }
+        let aid = playSeq[currentIndex].aid
+        guard pages.allSatisfy({ $0.aid == aid }),
+              playSeq.filter({ $0.aid == aid }).count == 1
+        else { return }
+        let existingKeys = Set(playSeq.map(\.sequenceKey))
+        let newPages = pages.filter { !existingKeys.contains($0.sequenceKey) || $0.cid == playSeq[currentIndex].cid }
+        guard newPages.count > 1 else { return }
+        playSeq.replaceSubrange(currentIndex...currentIndex, with: newPages)
+        currentIndex += newPages.firstIndex(where: { $0.cid == currentCid }) ?? 0
+    }
+
+    /// 回到序列第一条（循环播放用），返回第一条
+    func restart() -> PlayInfo? {
+        clearTemporaryOverrides()
+        currentIndex = 0
+        return playSeq.first
+    }
+}
+
+extension VideoSequenceProvider {
+    /// 用普通视频详情构建续播序列：UGC 合集优先（当前这一集若有多 P 则展开），否则用分 P。
+    /// 只有一条可播内容时返回 nil。
+    nonisolated static func makeSequence(detail: VideoDetail, aid: Int, cid: Int) -> (seq: [PlayInfo], index: Int)? {
+        let pages = detail.View.aid == aid ? (detail.View.pages ?? []) : []
+        let pageInfos = pages.map { PlayInfo(aid: aid, cid: $0.cid, title: $0.part) }
+
+        var episodes = [VideoDetail.Info.UgcSeason.UgcVideoInfo]()
+        if let season = detail.View.ugc_season {
+            if season.sections.count > 1 {
+                episodes = season.sections.first(where: { $0.episodes.contains(where: { $0.aid == aid }) })?.episodes ?? []
+            } else {
+                episodes = season.sections.first?.episodes ?? []
+            }
+            episodes.sort { $0.arc.ctime < $1.arc.ctime }
+        }
+
+        var seq = [PlayInfo]()
+        if episodes.contains(where: { $0.aid == aid }) {
+            for episode in episodes {
+                if episode.aid == aid, pageInfos.count > 1 {
+                    seq.append(contentsOf: pageInfos)
+                } else {
+                    seq.append(PlayInfo(aid: episode.aid, cid: episode.cid, title: episode.title))
+                }
+            }
+        } else {
+            seq = pageInfos
+        }
+        guard seq.count > 1 else { return nil }
+        let index = seq.firstIndex(where: { $0.aid == aid && $0.cid == cid })
+            ?? seq.firstIndex(where: { $0.aid == aid })
+            ?? 0
+        return (seq, index)
+    }
+
+    /// 用番剧信息构建正片序列
+    nonisolated static func makeSequence(bangumi: BangumiInfo, current: PlayInfo) -> (seq: [PlayInfo], index: Int)? {
+        let seq = bangumi.episodes.map {
+            PlayInfo(aid: $0.aid,
+                     cid: $0.cid,
+                     epid: $0.id,
+                     seasonId: bangumi.season_id,
+                     subType: current.subType ?? bangumi.type,
+                     title: [$0.title, $0.long_title].filter { !$0.isEmpty }.joined(separator: " "))
+        }
+        guard seq.count > 1 else { return nil }
+        let index = seq.firstIndex(where: { ($0.epid ?? 0) > 0 && $0.epid == current.epid })
+            ?? seq.firstIndex(where: { $0.cid == current.cid })
+        guard let index else { return nil }
+        return (seq, index)
+    }
 }
 
 class VideoPlayerViewController: CommonPlayerViewController {
