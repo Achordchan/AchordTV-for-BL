@@ -216,7 +216,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd BuildTools\nSDKROOT=(xcrun --sdk macosx --show-sdk-path)\nswift run -c release swiftformat --disable unusedArguments,numberFormatting,redundantReturn,andOperator,anyObjectProtocol,trailingClosures,redundantFileprivate --ranges nospace --swiftversion 5 \"$SRCROOT\"\n";
+			shellScript = "# CI 打包时跳过：每次都要从源码编译 swiftformat，耗时约 2.5 分钟且对产物没有影响\nif [ \"$SKIP_SWIFTFORMAT\" = \"YES\" ]; then\n  exit 0\nfi\ncd BuildTools\nSDKROOT=(xcrun --sdk macosx --show-sdk-path)\nswift run -c release swiftformat --disable unusedArguments,numberFormatting,redundantReturn,andOperator,anyObjectProtocol,trailingClosures,redundantFileprivate --ranges nospace --swiftversion 5 \"$SRCROOT\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
