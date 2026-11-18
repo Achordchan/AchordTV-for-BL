@@ -168,7 +168,7 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
     private let addBackground = BLGlass.makeView(cornerRadius: avatarSize / 2)
     private let addIconView = UIImageView(image: UIImage(systemName: "plus"))
     private let nameLabel = UILabel()
-    private let vipBadge = VipBadgeView(fontSize: 20)
+    private let vipBadge = VipBadgeView(fontSize: 28)
 
     override func setup() {
         super.setup()
@@ -196,19 +196,15 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
         }
 
         // 大会员标识压在头像底边上，不占额外高度
-        contentView.addSubview(vipBadge)
-        vipBadge.snp.makeConstraints { make in
-            make.centerX.equalTo(avatarView)
-            make.centerY.equalTo(avatarView.snp.bottom).offset(-6)
-            make.width.lessThanOrEqualTo(avatarView)
-        }
+        vipBadge.attach(below: avatarView, in: contentView)
 
         nameLabel.font = BLFont.listItem
         nameLabel.textAlignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         contentView.addSubview(nameLabel)
         nameLabel.snp.makeConstraints { make in
-            make.top.equalTo(avatarView.snp.bottom).offset(28)
+            // 给压在头像底边的大会员标识留出位置
+            make.top.equalTo(avatarView.snp.bottom).offset(38)
             make.leading.trailing.equalToSuperview()
         }
         updateAppearance()
