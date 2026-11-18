@@ -245,12 +245,12 @@ class SettingsViewController: UIViewController {
                 {
                     Settings.danmuDuration = $0
                 }
-                Actions(title: "智能屏蔽等级", message: "只显示权重不低于该等级的弹幕，等级越高屏蔽的低质量弹幕越多。大部分弹幕权重较高，低等级通常几乎不屏蔽",
-                        current: "\(Settings.danmuAILevel)",
-                        options: [Int32](1...10),
-                        optionString: (1...10).map { "\($0)" })
+                Actions(title: "智能屏蔽", message: "按 B 站给每条弹幕的权重屏蔽低质量弹幕：轻度去掉权重最低的一档，中度去掉两档，强力只保留权重最高的弹幕（部分视频会只剩很少弹幕）",
+                        current: DanmuAIShield.current.title,
+                        options: DanmuAIShield.allCases,
+                        optionString: DanmuAIShield.allCases.map(\.title))
                 {
-                    Settings.danmuAILevel = $0
+                    Settings.danmuAILevel = $0.rawValue
                 }
                 Toggle(title: "智能防档弹幕", setting: Settings.danmuMask, onChange: Settings.danmuMask.toggle())
                 Toggle(title: "按需本地运算智能防档弹幕(Exp)", setting: Settings.vnMask, onChange: Settings.vnMask.toggle())

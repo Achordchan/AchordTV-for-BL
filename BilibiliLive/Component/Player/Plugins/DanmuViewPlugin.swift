@@ -188,12 +188,12 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
             self?.danMuView.trackHeight = Self.trackHeight(for: size)
             refreshMenus()
         }
-        let levelMenu = Self.choiceMenu(title: "智能屏蔽等级", image: "shield.lefthalf.filled",
-                                        options: [Int32](1...10), current: Settings.danmuAILevel,
-                                        label: { "\($0)" })
-        { level in
+        let levelMenu = Self.choiceMenu(title: "智能屏蔽", image: "shield.lefthalf.filled",
+                                        options: DanmuAIShield.allCases, current: DanmuAIShield.current,
+                                        label: \.title)
+        { shield in
             // 过滤在发出弹幕时进行，对之后的弹幕立即生效
-            Settings.danmuAILevel = level
+            Settings.danmuAILevel = shield.rawValue
             refreshMenus()
         }
 
