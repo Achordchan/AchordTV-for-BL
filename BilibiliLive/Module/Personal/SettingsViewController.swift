@@ -196,7 +196,14 @@ class SettingsViewController: UIViewController {
                     Settings.mediaPlayerSpeed = $0
                 }
                 Toggle(title: "Avc优先(卡顿尝试开启)", setting: Settings.preferAvc, onChange: Settings.preferAvc.toggle())
-                Toggle(title: "多 CDN 并发加速", setting: Settings.multiCDNEnabled, onChange: Settings.multiCDNEnabled.toggle())
+                Actions(title: "多 CDN 并发加速",
+                        message: "关闭（默认）：起播前测速，固定用最快的 CDN 直连，适合大多数网络。\n开启：把视频拆成小块，经本地代理同时从多个 CDN 下载，单个节点限速时可能更快；但每块多一次请求、要按顺序拼接，网络好或节点少时反而更慢。出错会自动回退直连。只对之后新打开的视频生效。",
+                        current: Settings.multiCDNEnabled ? "开" : "关",
+                        options: [false, true],
+                        optionString: ["关闭（直连最快节点）", "开启（多节点并发）"])
+                {
+                    Settings.multiCDNEnabled = $0
+                }
                 Toggle(title: "无损音频和杜比全景声", setting: Settings.losslessAudio, onChange: Settings.losslessAudio.toggle())
                 Toggle(title: "匹配视频内容", setting: Settings.contentMatch, onChange: Settings.contentMatch.toggle())
                 Toggle(title: "仅在HDR视频匹配视频内容", setting: Settings.contentMatchOnlyInHDR, onChange: Settings.contentMatchOnlyInHDR.toggle())

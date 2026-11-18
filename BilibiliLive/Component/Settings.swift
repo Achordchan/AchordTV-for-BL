@@ -60,8 +60,10 @@ enum Settings {
     @UserDefault("Settings.preferAvc", defaultValue: false)
     static var preferAvc: Bool
 
-    /// 分段拆块后从多个 CDN 节点并发下载；高码率（4K/HDR）时提升明显，异常时自动回退直连
-    @UserDefault("Settings.multiCDNEnabled", defaultValue: true)
+    /// 分段拆块后经本地代理从多个 CDN 节点并发下载，异常时自动回退直连。
+    /// 默认关闭：直连会先测速选最快节点，多数网络下已经够快；并发模式有额外的
+    /// 拆块请求、按序交付和跨节点校验开销，是否更快取决于网络，需要用户自行对比。
+    @UserDefault("Settings.multiCDNEnabled", defaultValue: false)
     static var multiCDNEnabled: Bool
 
     @UserDefault("Settings.danmuMask", defaultValue: true)
