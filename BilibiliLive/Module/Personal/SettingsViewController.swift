@@ -245,7 +245,7 @@ class SettingsViewController: UIViewController {
                 {
                     Settings.danmuDuration = $0
                 }
-                Actions(title: "智能屏蔽等级", message: "只显示权重不低于该等级的弹幕，等级越高屏蔽的低质量弹幕越多。B 站返回的弹幕权重大多在 8–11，等级 8 及以下基本不会屏蔽",
+                Actions(title: "智能屏蔽等级", message: "只显示权重不低于该等级的弹幕，等级越高屏蔽的低质量弹幕越多。大部分弹幕权重较高，低等级通常几乎不屏蔽",
                         current: "\(Settings.danmuAILevel)",
                         options: [Int32](1...10),
                         optionString: (1...10).map { "\($0)" })
@@ -274,7 +274,7 @@ class SettingsViewController: UIViewController {
                 }
 
                 // 添加弹幕描边透明度设置
-                Actions(title: "弹幕描边透明度", message: "调整弹幕描边的透明度",
+                Actions(title: "弹幕描边不透明度", message: "0% 为不显示描边",
                         current: Settings.danmuStrokeAlpha.title,
                         options: DanmuStrokeAlpha.allCases,
                         optionString: DanmuStrokeAlpha.allCases.map({ $0.title }))

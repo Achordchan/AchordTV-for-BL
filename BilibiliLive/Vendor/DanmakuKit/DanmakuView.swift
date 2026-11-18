@@ -449,6 +449,9 @@ private extension DanmakuView {
         }
         for i in 0..<floatingTracks.count {
             var track = floatingTracks[i]
+            // 中途新增的轨道（调大显示区域 / 调小字号）也要沿用当前倍速和重叠设置
+            track.playingSpeed = playingSpeed
+            track.isOverlap = isOverlap
             track.stopClosure = { [weak self] cell in
                 guard let strongSelf = self else { return }
                 strongSelf.cellPlayingStop(cell)
@@ -475,6 +478,9 @@ private extension DanmakuView {
         }
         for i in 0..<topTracks.count {
             var track = topTracks[i]
+            // 中途新增的轨道（调大显示区域 / 调小字号）也要沿用当前倍速和重叠设置
+            track.playingSpeed = playingSpeed
+            track.isOverlap = isOverlap
             track.stopClosure = { [weak self] cell in
                 guard let strongSelf = self else { return }
                 strongSelf.cellPlayingStop(cell)
@@ -501,6 +507,9 @@ private extension DanmakuView {
         }
         for i in (0..<bottomTracks.count).reversed() {
             var track = bottomTracks[i]
+            // 中途新增的轨道（调大显示区域 / 调小字号）也要沿用当前倍速和重叠设置
+            track.playingSpeed = playingSpeed
+            track.isOverlap = isOverlap
             track.stopClosure = { [weak self] cell in
                 guard let strongSelf = self else { return }
                 strongSelf.cellPlayingStop(cell)
