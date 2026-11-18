@@ -24,6 +24,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 window.makeKeyAndVisible()
                 return
             }
+            // 调试：PLAYER_OVERLAY_PREVIEW=1 展示播放页浮层预览（白 / 黑 / 亮色画面）
+            if ProcessInfo.processInfo.environment["PLAYER_OVERLAY_PREVIEW"] == "1" {
+                window.rootViewController = PlayerOverlayPreviewViewController()
+                window.makeKeyAndVisible()
+                return
+            }
         #endif
 
         if ApiRequest.isLogin() {

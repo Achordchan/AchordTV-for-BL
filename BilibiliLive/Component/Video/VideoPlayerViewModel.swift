@@ -33,6 +33,8 @@ class VideoPlayerViewModel {
     var onExit: (() -> Void)?
     var onPlayInfoChanged: ((PlayInfo) -> Void)?
     var onShowDetail: ((PlayInfo) -> Void)?
+    /// 自动连播切到下一条时通知界面显示过渡卡片；第二个参数为 true 表示加载完成后补全的信息（只更新已显示的卡片）
+    var onAutoplayTransition: ((AutoplayTransition, _ isUpdate: Bool) -> Void)?
     var sequenceProvider: VideoSequenceProvider?
 
     private var playInfo: PlayInfo
@@ -52,6 +54,8 @@ class VideoPlayerViewModel {
     /// 自动跳到相关推荐后若加载失败，按顺序改试的后备候选（只对该次加载有效）
     private var relatedFallbacks = [PlayInfo]()
     private var relatedFallbackGeneration: Int?
+    /// 已显示、等待加载完成后补全封面 / 标题的过渡卡片信息
+    private var pendingTransition: (generation: Int, transition: AutoplayTransition)?
 
     init(playInfo: PlayInfo,
          playMode: VideoPlayerMode = .regular,
@@ -128,6 +132,7 @@ class VideoPlayerViewModel {
             let bangumiSequence = await loadBangumiSequenceIfNeeded(for: resolvedPlayInfo)
             guard !Task.isCancelled, loadGeneration == generation else { return }
 
+            completePendingTransition(generation: generation, playInfo: resolvedPlayInfo, detail: data.detail)
             playInfo = resolvedPlayInfo
             videoDetail = data.detail
             playedAids.insert(resolvedPlayInfo.aid)
@@ -328,7 +333,12 @@ class VideoPlayerViewModel {
     /// 播放结束后的去向：序列下一条 → 循环 → 相关推荐 → 退出
     private func handlePlaybackEnded(player: AVPlayer) async {
         let autoAdvance = playMode == .feedFlow || Settings.continouslyPlay
+        let finished = currentPlayInfo
+        let finishedDetail = videoDetail
         if autoAdvance, await playNextFromSequence() {
+            announceTransition(Self.sequenceTransitionKind(from: finished, to: currentPlayInfo),
+                               to: currentPlayInfo,
+                               previousDetail: finishedDetail)
             return
         }
 
@@ -338,6 +348,7 @@ class VideoPlayerViewModel {
                first.sequenceKey != currentPlayInfo.sequenceKey
             {
                 updatePlayInfo(first)
+                announceTransition(.restart, to: first, previousDetail: finishedDetail)
             } else {
                 _ = await player.seek(to: .zero)
                 player.play()
@@ -382,6 +393,81 @@ class VideoPlayerViewModel {
         updatePlayInfo(info)
         relatedFallbacks = fallbacks
         relatedFallbackGeneration = loadGeneration
+        announceTransition(.recommended, to: info, previousDetail: nil)
+    }
+
+    // MARK: - 连播过渡提示
+
+    private static func sequenceTransitionKind(from previous: PlayInfo, to next: PlayInfo) -> AutoplayTransition.Kind {
+        if next.isBangumi { return .nextEpisode }
+        if next.aid == previous.aid { return .nextPart }
+        return .nextInCollection
+    }
+
+    /// 切换已经发起（加载照常进行，不等这里）后，用手头已有的信息立即显示过渡卡片。
+    /// 只在普通播放里提示；沉浸式 Feed 的上下切换本身就是用户操作。
+    private func announceTransition(_ kind: AutoplayTransition.Kind, to info: PlayInfo, previousDetail: VideoDetail?) {
+        guard playMode == .regular else { return }
+        let sameVideoDetail = previousDetail?.View.aid == info.aid ? previousDetail : nil
+        var transition = AutoplayTransition(kind: kind,
+                                            title: info.title,
+                                            subtitle: info.ownerName,
+                                            coverURL: info.coverURL ?? sameVideoDetail?.pic)
+        switch kind {
+        case .nextPart:
+            if let detail = sameVideoDetail {
+                transition.title = Self.partTitle(info: info, detail: detail)
+                transition.subtitle = detail.title
+            }
+        case .nextEpisode:
+            transition.title = info.title.map(Self.episodeTitle)
+        case .nextInCollection, .restart, .recommended:
+            break
+        }
+        pendingTransition = (loadGeneration, transition)
+        onAutoplayTransition?(transition, false)
+    }
+
+    /// 加载完成：用新视频的详情补全卡片上缺的封面 / 标题 / 副标题
+    private func completePendingTransition(generation: Int, playInfo info: PlayInfo, detail: VideoDetail?) {
+        guard let pending = pendingTransition, pending.generation == generation else { return }
+        pendingTransition = nil
+        guard let detail, detail.View.aid == info.aid else { return }
+        var transition = pending.transition
+        if transition.coverURL == nil {
+            transition.coverURL = detail.pic
+        }
+        if transition.title?.isEmpty ?? true {
+            transition.title = transition.kind == .nextPart ? Self.partTitle(info: info, detail: detail) : detail.title
+        }
+        if transition.subtitle?.isEmpty ?? true {
+            switch transition.kind {
+            case .nextPart:
+                transition.subtitle = detail.title
+            case .nextEpisode:
+                transition.subtitle = detail.title == transition.title ? nil : detail.title
+            case .nextInCollection, .restart, .recommended:
+                transition.subtitle = detail.ownerName
+            }
+        }
+        if transition != pending.transition {
+            onAutoplayTransition?(transition, true)
+        }
+    }
+
+    /// 分 P 标题：「P3 · 分 P 名」
+    private static func partTitle(info: PlayInfo, detail: VideoDetail) -> String? {
+        let pages = detail.View.pages ?? []
+        guard let index = pages.firstIndex(where: { $0.cid == info.cid }) else { return info.title }
+        let part = pages[index].part
+        return part.isEmpty ? "P\(index + 1)" : "P\(index + 1) · \(part)"
+    }
+
+    /// 番剧剧集标题以纯数字开头时（如「4 夏日祭」）补成「第4话 夏日祭」
+    private static func episodeTitle(_ title: String) -> String {
+        let parts = title.split(separator: " ", maxSplits: 1).map(String.init)
+        guard let first = parts.first, Int(first) != nil else { return title }
+        return (["第\(first)话"] + parts.dropFirst()).joined(separator: " ")
     }
 
     func playNextFromSequence() async -> Bool {

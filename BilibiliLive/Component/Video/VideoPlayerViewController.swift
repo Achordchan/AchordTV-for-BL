@@ -182,7 +182,7 @@ extension VideoSequenceProvider {
     /// 只有一条可播内容时返回 nil。
     nonisolated static func makeSequence(detail: VideoDetail, aid: Int, cid: Int) -> (seq: [PlayInfo], index: Int)? {
         let pages = detail.View.aid == aid ? (detail.View.pages ?? []) : []
-        let pageInfos = pages.map { PlayInfo(aid: aid, cid: $0.cid, title: $0.part) }
+        let pageInfos = pages.map { PlayInfo(aid: aid, cid: $0.cid, title: $0.part, coverURL: detail.pic) }
 
         var episodes = [VideoDetail.Info.UgcSeason.UgcVideoInfo]()
         if let season = detail.View.ugc_season {
@@ -200,7 +200,7 @@ extension VideoSequenceProvider {
                 if episode.aid == aid, pageInfos.count > 1 {
                     seq.append(contentsOf: pageInfos)
                 } else {
-                    seq.append(PlayInfo(aid: episode.aid, cid: episode.cid, title: episode.title))
+                    seq.append(PlayInfo(aid: episode.aid, cid: episode.cid, title: episode.title, coverURL: episode.arc.pic))
                 }
             }
         } else {
@@ -221,7 +221,8 @@ extension VideoSequenceProvider {
                      epid: $0.id,
                      seasonId: bangumi.season_id,
                      subType: current.subType ?? bangumi.type,
-                     title: [$0.title, $0.long_title].filter { !$0.isEmpty }.joined(separator: " "))
+                     title: [$0.title, $0.long_title].filter { !$0.isEmpty }.joined(separator: " "),
+                     coverURL: $0.cover)
         }
         guard seq.count > 1 else { return nil }
         let index = seq.firstIndex(where: { ($0.epid ?? 0) > 0 && $0.epid == current.epid })
@@ -269,6 +270,10 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private var hasRetriedCurrentItem = false
     private var isStopping = false
     private var pendingAutoTriggeredInfoActionKey: String?
+    /// 自动连播的过渡卡片
+    private lazy var transitionPresenter = AutoplayTransitionPresenter(hostView: view)
+    /// 等新视频真正出画面（timeControlStatus == .playing）再把卡片切到「正在播放」并开始倒计时
+    private var transitionPlaybackObservation: NSKeyValueObservation?
 
     init(playInfo: PlayInfo,
          playMode: VideoPlayerMode = .regular,
@@ -312,6 +317,12 @@ class VideoPlayerViewController: CommonPlayerViewController {
         }
         viewModel.onShowDetail = { [weak self] info in
             self?.showDetail(for: info)
+        }
+        viewModel.onAutoplayTransition = { [weak self] transition, isUpdate in
+            if !isUpdate {
+                self?.transitionPlaybackObservation = nil
+            }
+            self?.transitionPresenter.show(transition, isUpdate: isUpdate)
         }
         viewModel.loadResult.receive(on: DispatchQueue.main).sink { [weak self] result in
             switch result {
@@ -379,6 +390,7 @@ class VideoPlayerViewController: CommonPlayerViewController {
     }
 
     override func playerDidStart(player: AVPlayer) {
+        markTransitionPlayingWhenPlaybackBegins(player)
         switch playMode {
         case .preview:
             onPlaybackStarted?()
@@ -414,6 +426,8 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private func stopAsyncWork() {
         guard !isStopping else { return }
         isStopping = true
+        transitionPlaybackObservation = nil
+        transitionPresenter.hide(animated: false)
         neighborPreloadTask?.cancel()
         neighborPreloadTask = nil
         viewModel.cancelLoading()
@@ -424,6 +438,8 @@ class VideoPlayerViewController: CommonPlayerViewController {
     }
 
     private func handleLoadFailure(message: String) {
+        transitionPlaybackObservation = nil
+        transitionPresenter.hide(animated: false)
         switch playMode {
         case .preview:
             onLoadFailure?(message)
@@ -458,6 +474,20 @@ class VideoPlayerViewController: CommonPlayerViewController {
         })
         alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
         present(alert, animated: true)
+    }
+
+    /// `playerDidStart` 来自 rate > 0，缓冲中（.waitingToPlayAtSpecifiedRate）也会触发，
+    /// 所以这里再等到真正开始播放
+    private func markTransitionPlayingWhenPlaybackBegins(_ player: AVPlayer) {
+        guard transitionPresenter.isShowing else { return }
+        transitionPlaybackObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            guard player.timeControlStatus == .playing else { return }
+            Task { @MainActor [weak self] in
+                guard let self, transitionPlaybackObservation != nil else { return }
+                transitionPlaybackObservation = nil
+                transitionPresenter.markPlaying()
+            }
+        }
     }
 
     private func showDetail(for info: PlayInfo) {

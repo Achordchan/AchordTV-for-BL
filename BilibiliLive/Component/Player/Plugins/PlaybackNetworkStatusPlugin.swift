@@ -40,17 +40,17 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
     private var smoothedSpeed: Double?
 
     // 右下角状态胶囊
-    /// 与左侧系统信息标签（简介 / 章节…）同高、同一水平中线，圆角做成胶囊
-    private let chipView = BLGlass.makeView(cornerRadius: 32)
-    private let modeIconView = UIImageView()
-    private let modeLabel = UILabel()
-    private let separatorView = UIView()
-    private let speedIconView = UIImageView(image: UIImage(systemName: "arrow.down"))
-    private let speedLabel = UILabel()
+    private let chipView = PlaybackStatusChipView()
 
     // 中心加载提示
-    private let loadingView = BLGlass.makeView(cornerRadius: 20, border: false)
-    private let loadingLabel = UILabel()
+    private let loadingView = PlaybackLoadingView()
+    /// 加载提示由播放器状态的 KVO 驱动（不等 1 秒定时器），起播 / 拖动结束后立即收起
+    private var playerObservation: NSKeyValueObservation?
+    private var timeControlObservation: NSKeyValueObservation?
+    private var currentItemObservation: NSKeyValueObservation?
+    private var itemStatusObservation: NSKeyValueObservation?
+    private var showLoadingWorkItem: DispatchWorkItem?
+    private var isLoadingShown = false
 
     init(statusProvider: @escaping () -> PlaybackTransportStatus) {
         self.statusProvider = statusProvider
@@ -71,11 +71,18 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
 
     func playerDidLoad(playerVC: AVPlayerViewController) {
         self.playerVC = playerVC
+        playerObservation = playerVC.observe(\.player, options: [.initial, .new]) { [weak self] vc, _ in
+            DispatchQueue.main.async { self?.observe(player: vc.player) }
+        }
     }
 
     /// 插件被移除（换集、退出）时停表并移除自己的视图；换 player 时不处理，继续采样新 player
     func playerWillCleanUp(playerVC: AVPlayerViewController) {
         stopTimer()
+        playerObservation = nil
+        observe(player: nil)
+        showLoadingWorkItem?.cancel()
+        showLoadingWorkItem = nil
         chipView.removeFromSuperview()
         loadingView.removeFromSuperview()
     }
@@ -92,65 +99,20 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
 
     private func setupChip(in container: UIView) {
         chipView.alpha = 0
-        chipView.isUserInteractionEnabled = false
         container.addSubview(chipView)
         chipView.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(80)
             make.bottom.equalToSuperview().inset(48)
-            make.height.equalTo(64)
-        }
-
-        let secondary = BLGlass.Color.secondaryText
-        modeIconView.tintColor = .white
-        modeIconView.contentMode = .scaleAspectFit
-        modeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
-        modeLabel.font = UIFont.systemFont(ofSize: 21, weight: .medium)
-        modeLabel.textColor = .white
-
-        separatorView.backgroundColor = UIColor(white: 1, alpha: 0.25)
-        separatorView.snp.makeConstraints { make in
-            make.width.equalTo(1.5)
-            make.height.equalTo(20)
-        }
-
-        speedIconView.tintColor = secondary
-        speedIconView.contentMode = .scaleAspectFit
-        speedIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
-        speedLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 21, weight: .regular)
-        speedLabel.textColor = secondary
-
-        let modeStack = UIStackView(arrangedSubviews: [modeIconView, modeLabel])
-        modeStack.spacing = 8
-        modeStack.alignment = .center
-        let speedStack = UIStackView(arrangedSubviews: [speedIconView, speedLabel])
-        speedStack.spacing = 6
-        speedStack.alignment = .center
-        let stack = UIStackView(arrangedSubviews: [modeStack, separatorView, speedStack])
-        stack.spacing = 14
-        stack.alignment = .center
-        chipView.contentView.addSubview(stack)
-        stack.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview().inset(26)
-            make.centerY.equalToSuperview()
         }
     }
 
     private func setupLoading(in container: UIView) {
         loadingView.alpha = 0
-        loadingView.isUserInteractionEnabled = false
         container.addSubview(loadingView)
         loadingView.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
             // 放在系统加载转圈的下方
             make.centerY.equalToSuperview().offset(96)
-            make.height.equalTo(40)
-        }
-        loadingLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 22, weight: .medium)
-        loadingLabel.textColor = .white
-        loadingView.contentView.addSubview(loadingLabel)
-        loadingLabel.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview().inset(18)
-            make.centerY.equalToSuperview()
         }
     }
 
@@ -208,12 +170,6 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
 
     private func refreshChip() {
         let (icon, text) = Self.describe(statusProvider())
-        modeIconView.image = icon.flatMap { UIImage(systemName: $0) }
-        modeIconView.isHidden = icon == nil
-        modeLabel.text = text
-        modeLabel.isHidden = text == nil
-        separatorView.isHidden = text == nil
-
         var parts = [String]()
         if let speed = smoothedSpeed {
             parts.append(Self.format(speed: speed))
@@ -223,30 +179,79 @@ final class PlaybackNetworkStatusPlugin: NSObject, CommonPlayerPlugin {
         if let buffered = bufferedAhead(), buffered >= 1 {
             parts.append("已缓冲 \(Self.format(duration: buffered))")
         }
-        speedLabel.text = parts.joined(separator: "  ·  ")
+        chipView.update(icon: icon, mode: text, speed: parts.joined(separator: "  ·  "))
     }
 
-    private func refreshLoading() {
+    // MARK: - 加载提示
+
+    private func observe(player: AVPlayer?) {
+        timeControlObservation = nil
+        currentItemObservation = nil
+        itemStatusObservation = nil
+        guard let player else {
+            refreshLoading()
+            return
+        }
+        timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.refreshLoading() }
+        }
+        currentItemObservation = player.observe(\.currentItem, options: [.initial, .new]) { [weak self] player, _ in
+            DispatchQueue.main.async { self?.observe(item: player.currentItem) }
+        }
+    }
+
+    private func observe(item: AVPlayerItem?) {
+        itemStatusObservation = item?.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.refreshLoading() }
+        }
+        refreshLoading()
+    }
+
+    private var isPlayerLoading: Bool {
         let player = playerVC?.player
         let item = player?.currentItem
-        let isLoading = player == nil
+        if item?.status == .failed { return false }
+        return player == nil
             || item == nil
             || item?.status == .unknown
             || player?.timeControlStatus == .waitingToPlayAtSpecifiedRate
-        let failed = item?.status == .failed
-        let shouldShow = isLoading && !failed
-        if shouldShow {
-            if let speed = smoothedSpeed, speed > 0 {
-                loadingLabel.text = "正在加载  ·  \(Self.format(speed: speed))"
-            } else {
-                loadingLabel.text = "正在加载…"
+    }
+
+    /// 进入加载：稍等片刻仍在加载才淡入，避免拖动 / 短暂缓冲时一闪而过；
+    /// 结束加载：立即收起（打断正在进行的淡入），不等下一次定时刷新。
+    private func refreshLoading() {
+        guard loadingView.superview != nil else { return }
+        if isPlayerLoading {
+            updateLoadingText()
+            guard !isLoadingShown, showLoadingWorkItem == nil else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                showLoadingWorkItem = nil
+                guard isPlayerLoading, !isLoadingShown else { return }
+                isLoadingShown = true
+                updateLoadingText()
+                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState]) {
+                    self.loadingView.alpha = 1
+                }
+            }
+            showLoadingWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        } else {
+            showLoadingWorkItem?.cancel()
+            showLoadingWorkItem = nil
+            guard isLoadingShown else { return }
+            isLoadingShown = false
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.beginFromCurrentState]) {
+                self.loadingView.alpha = 0
             }
         }
-        let targetAlpha: CGFloat = shouldShow ? 1 : 0
-        if loadingView.alpha != targetAlpha {
-            UIView.animate(withDuration: 0.25) {
-                self.loadingView.alpha = targetAlpha
-            }
+    }
+
+    private func updateLoadingText() {
+        if let speed = smoothedSpeed, speed > 0 {
+            loadingView.text = "正在加载  ·  \(Self.format(speed: speed))"
+        } else {
+            loadingView.text = "正在加载…"
         }
     }
 
