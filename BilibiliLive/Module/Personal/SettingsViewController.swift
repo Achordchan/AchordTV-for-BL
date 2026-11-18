@@ -238,11 +238,25 @@ class SettingsViewController: UIViewController {
                 {
                     Settings.danmuArea = $0
                 }
+                Actions(title: "弹幕展示时长", message: "一条滚动弹幕从出现到消失的时间，越短越快",
+                        current: "\(Int(Settings.danmuDuration)) 秒",
+                        options: [4.0, 6.0, 8.0],
+                        optionString: ["4 秒", "6 秒", "8 秒"])
+                {
+                    Settings.danmuDuration = $0
+                }
+                Actions(title: "智能屏蔽", message: "按 B 站给每条弹幕的权重屏蔽低质量弹幕：轻度去掉权重最低的一档，中度去掉两档，强力只保留权重最高的弹幕（部分视频会只剩很少弹幕）",
+                        current: DanmuAIShield.current.title,
+                        options: DanmuAIShield.allCases,
+                        optionString: DanmuAIShield.allCases.map(\.title))
+                {
+                    Settings.danmuAILevel = $0.rawValue
+                }
                 Toggle(title: "智能防档弹幕", setting: Settings.danmuMask, onChange: Settings.danmuMask.toggle())
                 Toggle(title: "按需本地运算智能防档弹幕(Exp)", setting: Settings.vnMask, onChange: Settings.vnMask.toggle())
 
                 // 添加弹幕透明度设置
-                Actions(title: "弹幕透明度", message: "调整弹幕的透明度",
+                Actions(title: "弹幕不透明度", message: "100% 为完全不透明",
                         current: Settings.danmuAlpha.title,
                         options: DanmuAlpha.allCases,
                         optionString: DanmuAlpha.allCases.map({ $0.title }))
@@ -260,7 +274,7 @@ class SettingsViewController: UIViewController {
                 }
 
                 // 添加弹幕描边透明度设置
-                Actions(title: "弹幕描边透明度", message: "调整弹幕描边的透明度",
+                Actions(title: "弹幕描边不透明度", message: "0% 为不显示描边",
                         current: Settings.danmuStrokeAlpha.title,
                         options: DanmuStrokeAlpha.allCases,
                         optionString: DanmuStrokeAlpha.allCases.map({ $0.title }))

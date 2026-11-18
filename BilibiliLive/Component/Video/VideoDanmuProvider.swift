@@ -217,11 +217,14 @@ class VideoDanmuProvider: DanmuProviderProtocol {
             onSendTextModel.send(model)
         }
 
+        // 智能屏蔽：只发出权重（DanmakuElem.weight）不低于当前档位阈值的弹幕。
+        // 每次发出时现读设置，所以菜单里改了档位对之后的弹幕立即生效
+        let minWeight = DanmuAIShield.current.rawValue
         while danmuIdx < dms.count {
             let dm = dms[danmuIdx]
             guard dm.time < time else { break }
             danmuIdx += 1
-            if dm.aiLevel < Settings.danmuAILevel { continue }
+            if dm.aiLevel < minWeight { continue }
             let model = DanmakuTextCellModel(dm: dm)
             onShowDanmu?(model)
             onSendTextModel.send(model)

@@ -206,6 +206,36 @@ enum DanmuArea: Codable, CaseIterable {
     case style_0
 }
 
+/// 智能屏蔽档位，存在 Settings.danmuAILevel 里（值即权重阈值），只显示权重 ≥ 阈值的弹幕。
+/// B 站弹幕权重（DanmakuElem.weight）实测集中在 8–11，B 站原来的 1–8 级几乎不屏蔽任何弹幕，
+/// 所以档位直接取能起作用的阈值
+enum DanmuAIShield: Int32, CaseIterable {
+    case off = 0
+    case light = 9
+    case medium = 10
+    case strong = 11
+
+    var title: String {
+        switch self {
+        case .off:
+            return "关闭"
+        case .light:
+            return "轻度"
+        case .medium:
+            return "中度"
+        case .strong:
+            return "强力"
+        }
+    }
+
+    /// 当前生效的档位。旧版本存的是 1–10 级，取不超过它的最高档位（1–8 级即「关闭」），
+    /// 让显示和实际过滤保持一致
+    static var current: DanmuAIShield {
+        let level = Settings.danmuAILevel
+        return allCases.last { $0.rawValue <= level } ?? .off
+    }
+}
+
 enum DanmuSize: String, Codable, CaseIterable {
     case size_25
     case size_31
@@ -247,7 +277,7 @@ enum DanmuAlpha: Double, Codable, CaseIterable {
     case alpha_10 = 1.0
 
     var title: String {
-        return String(format: "%.1f", rawValue)
+        return "\(Int((rawValue * 100).rounded()))%"
     }
 }
 
@@ -277,7 +307,7 @@ enum DanmuStrokeAlpha: Double, Codable, CaseIterable {
     case alpha_10 = 1.0
 
     var title: String {
-        return String(format: "%.1f", rawValue)
+        return "\(Int((rawValue * 100).rounded()))%"
     }
 }
 
@@ -291,7 +321,7 @@ extension DanmuArea {
         case .style_25:
             return "1/4屏"
         case .style_0:
-            return "不限制"
+            return "全屏"
         }
     }
 
