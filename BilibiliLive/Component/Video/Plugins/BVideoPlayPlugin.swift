@@ -420,7 +420,7 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
                 videos = matching
             }
         } else {
-            let qualityLimit = Settings.mediaQuality.qn
+            let qualityLimit = Settings.mediaQuality.resolvedQn
             videos = videos.filter { $0.id <= qualityLimit }
             if let highest = videos.map(\.id).max() {
                 videos = videos.filter { $0.id == highest }
