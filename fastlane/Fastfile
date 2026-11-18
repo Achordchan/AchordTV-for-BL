@@ -19,6 +19,11 @@ platform :tvos do
     skip_codesigning: true,
     skip_package_ipa: true,
     archive_path: "App.xcarchive",
+    # 固定 DerivedData 与依赖包目录，供 CI 缓存复用（依赖编译和下载不必每次从头来）
+    derived_data_path: "build/DerivedData",
+    cloned_source_packages_path: "build/SourcePackages",
+    # 打包不需要格式化、dSYM 和索引
+    xcargs: "SKIP_SWIFTFORMAT=YES DEBUG_INFORMATION_FORMAT=dwarf COMPILER_INDEX_STORE_ENABLE=NO",
     )
     FastlaneCore::CommandExecutor.execute(command: "cd .. && mv App.xcarchive/Products/Applications ./Payload")
     zip(

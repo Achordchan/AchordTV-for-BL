@@ -1,14 +1,18 @@
 name: Build workflow
+# 只在手动触发时打包（Actions 页面 Run workflow，或 `gh workflow run build.yml --ref main`）。
+# PR 和推送到 main 都不再自动打包，避免占用 macOS 机器、让发版排队。
 on:
-  pull_request:
-  push:
-    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "构建完成后发布 Release（关闭则只构建并上传产物，用于验证）"
+        type: boolean
+        default: true
 
-# 同一分支的构建串行执行：推送到 main 的构建按触发顺序依次完成，不会出现旧构建后完成的情况；
-# PR 上的构建只保留最新一次
+# 同一分支的构建串行执行，不会出现旧构建后完成的情况
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -20,13 +24,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
+        id: xcode
         with:
           xcode-version: 'latest-stable'
+
+      # 缓存依赖包源码和 DerivedData：依赖（Alamofire、Kingfisher、SwiftProtobuf 等）不必每次重新下载、重新编译。
+      # App 自身源码由 checkout 刷新时间戳，总会重新编译。
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/SourcePackages
+            build/DerivedData
+          # 不带提交号：只在 Xcode 或依赖版本变化时重新保存，平时直接复用，省去每次上传缓存的时间
+          key: build-${{ runner.os }}-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('BilibiliLive.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # 侧载工具靠版本号判断是否有更新：每次发布都递增
       # 1.0.0（build 100）是首个手动发布的版本，自动发布从 1.0.<run_number>（build 100+run_number）开始
       - name: Set version
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: |
           VERSION="1.0.${{ github.run_number }}"
           BUILD="$((100 + ${{ github.run_number }}))"
@@ -48,7 +64,7 @@ jobs:
       # 只在本仓库发布（本仓库在 GitHub 上仍登记为 fork，不能用 repository.fork 判断）。
       # 发布为正式版并标记为 Latest，资产名固定 AchordTV.ipa，供侧载工具获取与自动更新。
       - name: Create GitHub release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'Achordchan/AchordTV-for-BL'
+        if: github.ref == 'refs/heads/main' && inputs.publish && github.repository == 'Achordchan/AchordTV-for-BL'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
