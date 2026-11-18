@@ -238,11 +238,25 @@ class SettingsViewController: UIViewController {
                 {
                     Settings.danmuArea = $0
                 }
+                Actions(title: "弹幕展示时长", message: "一条滚动弹幕从出现到消失的时间，越短越快",
+                        current: "\(Int(Settings.danmuDuration)) 秒",
+                        options: [4.0, 6.0, 8.0],
+                        optionString: ["4 秒", "6 秒", "8 秒"])
+                {
+                    Settings.danmuDuration = $0
+                }
+                Actions(title: "智能屏蔽等级", message: "只显示权重不低于该等级的弹幕，等级越高屏蔽的低质量弹幕越多。B 站返回的弹幕权重大多在 8–11，等级 8 及以下基本不会屏蔽",
+                        current: "\(Settings.danmuAILevel)",
+                        options: [Int32](1...10),
+                        optionString: (1...10).map { "\($0)" })
+                {
+                    Settings.danmuAILevel = $0
+                }
                 Toggle(title: "智能防档弹幕", setting: Settings.danmuMask, onChange: Settings.danmuMask.toggle())
                 Toggle(title: "按需本地运算智能防档弹幕(Exp)", setting: Settings.vnMask, onChange: Settings.vnMask.toggle())
 
                 // 添加弹幕透明度设置
-                Actions(title: "弹幕透明度", message: "调整弹幕的透明度",
+                Actions(title: "弹幕不透明度", message: "100% 为完全不透明",
                         current: Settings.danmuAlpha.title,
                         options: DanmuAlpha.allCases,
                         optionString: DanmuAlpha.allCases.map({ $0.title }))

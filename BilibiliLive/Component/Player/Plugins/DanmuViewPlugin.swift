@@ -108,9 +108,14 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
         danMuView.setNeedsLayout()
         danMuView.layoutIfNeeded()
         danMuView.paddingTop = 5
-        danMuView.trackHeight = 50
+        danMuView.trackHeight = Self.trackHeight(for: Settings.danmuSize)
         danMuView.displayArea = Settings.danmuArea.percent
         danMuView.recaculateTracks()
+    }
+
+    /// 轨道高度跟随字号（36pt 对应 50，保持原来的默认观感），避免大字号时相邻轨道重叠、小字号时过于稀疏
+    private static func trackHeight(for size: DanmuSize) -> CGFloat {
+        (size.size * 50 / 36).rounded()
     }
 
     func playerDidStart(player: AVPlayer) {
@@ -125,10 +130,10 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
         self.playerVC = playerVC
     }
 
-    /// 底栏「弹幕」按钮：显示开关、展示时长、屏蔽等级合在一处；图标随开关状态变化
+    /// 底栏「弹幕」按钮：显示开关和常用弹幕设置都在这里，改了立即生效并保存为默认值；图标随开关状态变化
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
         let isShowing = Defaults.shared.showDanmu
-        // 刷新底栏，让按钮图标和标题反映最新状态
+        // 刷新底栏，让按钮图标和下次打开时的勾选反映最新状态
         let refreshMenus: () -> Void = { [weak self] in
             DispatchQueue.main.async {
                 (self?.playerVC?.parent as? CommonPlayerViewController)?.updateMenus()
@@ -146,22 +151,82 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
             action.image = UIImage(systemName: showing ? "eye" : "eye.slash")
             refreshMenus()
         }
-        let durationMenu = UIMenu(title: "展示时长", options: [.displayInline, .singleSelection], children: [4, 6, 8].map { dur in
-            UIAction(title: "\(dur) 秒", state: dur == Settings.danmuDuration ? .on : .off) { _ in Settings.danmuDuration = dur }
-        })
-        let levelMenu = UIMenu(title: "智能屏蔽等级（当前 \(Settings.danmuAILevel)）",
-                               image: UIImage(systemName: "shield.lefthalf.filled"),
-                               options: .singleSelection,
-                               children: [Int32](1...10).map { level in
-                                   UIAction(title: "\(level)", state: level == Settings.danmuAILevel ? .on : .off) { _ in
-                                       Settings.danmuAILevel = level
-                                       refreshMenus()
-                                   }
-                               })
+
+        // 子菜单标题里不放当前值：已展示的上一级菜单不会刷新，写进标题会显示旧值，当前值只用勾选表示
+        let durationMenu = Self.choiceMenu(title: "展示时长", image: "timer",
+                                           options: [4.0, 6.0, 8.0], current: Settings.danmuDuration,
+                                           label: { "\(Int($0)) 秒" })
+        { duration in
+            // 只影响之后发出的弹幕
+            Settings.danmuDuration = duration
+            refreshMenus()
+        }
+        let alphaMenu = Self.choiceMenu(title: "不透明度", image: "circle.lefthalf.filled",
+                                        options: Array(DanmuAlpha.allCases.reversed()), current: Settings.danmuAlpha,
+                                        label: \.title)
+        { [weak self] alpha in
+            Settings.danmuAlpha = alpha
+            // 透明度在绘制时读取，让屏上已有的弹幕也重绘一次
+            self?.danMuView.subviews.forEach { $0.layer.setNeedsDisplay() }
+            refreshMenus()
+        }
+        let areaMenu = Self.choiceMenu(title: "显示区域", image: "rectangle.tophalf.filled",
+                                       options: DanmuArea.allCases.sorted { $0.percent < $1.percent },
+                                       current: Settings.danmuArea, label: \.title)
+        { [weak self] area in
+            Settings.danmuArea = area
+            // displayArea 的 didSet 会重算轨道，超出新区域的弹幕随轨道一起移除
+            self?.danMuView.displayArea = area.percent
+            refreshMenus()
+        }
+        let sizeMenu = Self.choiceMenu(title: "字号", image: "textformat.size",
+                                       options: DanmuSize.allCases, current: Settings.danmuSize,
+                                       label: \.title)
+        { [weak self] size in
+            // 字号只影响之后发出的弹幕；轨道高度随之调整
+            Settings.danmuSize = size
+            self?.danMuView.trackHeight = Self.trackHeight(for: size)
+            refreshMenus()
+        }
+        let levelMenu = Self.choiceMenu(title: "智能屏蔽等级", image: "shield.lefthalf.filled",
+                                        options: [Int32](1...10), current: Settings.danmuAILevel,
+                                        label: { "\($0)" })
+        { level in
+            // 过滤在发出弹幕时进行，对之后的弹幕立即生效
+            Settings.danmuAILevel = level
+            refreshMenus()
+        }
+
         let menu = UIMenu(title: "弹幕",
                           image: UIImage(systemName: isShowing ? "list.bullet.rectangle.fill" : "list.bullet.rectangle"),
                           identifier: PlayerMenu.danmu,
-                          children: [toggleAction, durationMenu, levelMenu])
+                          children: [toggleAction, durationMenu, alphaMenu, areaMenu, sizeMenu, levelMenu])
         return [menu]
+    }
+
+    /// 单选子菜单。选中后同步改兄弟项的勾选，因为已展示的菜单不会因重建而刷新
+    private static func choiceMenu<T: Equatable>(title: String,
+                                                 image: String,
+                                                 options: [T],
+                                                 current: T,
+                                                 label: (T) -> String,
+                                                 onSelect: @escaping (T) -> Void) -> UIMenu
+    {
+        // 弱引用表，避免 action → handler → 表 → action 的循环引用
+        let siblings = NSHashTable<UIAction>.weakObjects()
+        let actions = options.map { option in
+            UIAction(title: label(option), state: option == current ? .on : .off) { action in
+                for sibling in siblings.allObjects {
+                    sibling.state = .off
+                }
+                action.state = .on
+                onSelect(option)
+            }
+        }
+        actions.forEach { siblings.add($0) }
+        return UIMenu(title: title,
+                      image: UIImage(systemName: image),
+                      options: .singleSelection,
+                      children: actions)
     }
 }

@@ -247,7 +247,7 @@ enum DanmuAlpha: Double, Codable, CaseIterable {
     case alpha_10 = 1.0
 
     var title: String {
-        return String(format: "%.1f", rawValue)
+        return "\(Int((rawValue * 100).rounded()))%"
     }
 }
 
@@ -277,7 +277,7 @@ enum DanmuStrokeAlpha: Double, Codable, CaseIterable {
     case alpha_10 = 1.0
 
     var title: String {
-        return String(format: "%.1f", rawValue)
+        return "\(Int((rawValue * 100).rounded()))%"
     }
 }
 
@@ -291,7 +291,7 @@ extension DanmuArea {
         case .style_25:
             return "1/4屏"
         case .style_0:
-            return "不限制"
+            return "全屏"
         }
     }
 
