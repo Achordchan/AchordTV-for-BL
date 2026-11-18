@@ -303,11 +303,11 @@ extension SettingsViewController {
                 formatter.dateFormat = "yyyy-MM-dd"
                 text += "（\(formatter.string(from: due)) 到期）"
             }
-            status = text + "，可播放 4K / 杜比视界"
+            status = text + "，可播放 4K / HDR / 杜比视界"
         } else {
             status = "当前账号不是大会员，1080p 高帧率及以上画质需要大会员"
         }
-        return status + "\n「自动」：大会员按电视能力放开到 4K / 杜比视界，否则 1080p"
+        return status + "\n「自动」：大会员按电视能力放开到 4K / HDR / 杜比视界，否则 1080p"
     }
 
     func Actions<T>(title: String,

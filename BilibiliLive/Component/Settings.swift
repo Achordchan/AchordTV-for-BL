@@ -374,7 +374,7 @@ extension MediaQualityEnum {
     var qn: Int {
         switch self {
         case .auto:
-            return Self.autoResolved.qn
+            return Self.autoLimit.qn
         case .quality_1080p:
             return 116
         case .quality_2160p:
@@ -387,7 +387,7 @@ extension MediaQualityEnum {
     var fnval: Int {
         switch self {
         case .auto:
-            return Self.autoResolved.fnval
+            return MediaQualityEnum.quality_hdr_dolby.fnval
         case .quality_1080p:
             return 16
         case .quality_2160p:
@@ -399,19 +399,33 @@ extension MediaQualityEnum {
 }
 
 extension MediaQualityEnum {
-    /// 「自动」实际对应的档位：大会员且电视支持 HDR → 杜比视界；大会员 → 4K；否则 1080p
-    static var autoResolved: MediaQualityEnum {
-        guard AccountManager.shared.isActiveAccountVip else { return .quality_1080p }
-        return AVPlayer.eligibleForHDRPlayback ? .quality_hdr_dolby : .quality_2160p
+    /// HDR10 档位的 qn（B 站 125）
+    static let hdr10Qn = 125
+
+    /// 「自动」实际对应的上限，按电视实际支持的 HDR 格式区分：
+    /// 大会员 + 支持杜比视界 → 126；大会员 + 只支持 HDR10 → 125（不放开杜比视界）；
+    /// 大会员 + 不支持 HDR → 4K（120）；非大会员 → 1080p
+    static var autoLimit: (qn: Int, desp: String) {
+        guard AccountManager.shared.isActiveAccountVip else {
+            return (quality_1080p.qn, quality_1080p.desp)
+        }
+        let modes = AVPlayer.availableHDRModes
+        if modes.contains(.dolbyVision) {
+            return (quality_hdr_dolby.qn, quality_hdr_dolby.desp)
+        }
+        if modes.contains(.hdr10) {
+            return (hdr10Qn, "HDR")
+        }
+        return (quality_2160p.qn, quality_2160p.desp)
     }
 
     /// 播放时真正生效的画质上限（qn）
     var resolvedQn: Int {
-        self == .auto ? Self.autoResolved.qn : qn
+        self == .auto ? Self.autoLimit.qn : qn
     }
 
     /// 设置页右侧显示的当前值，「自动」带上解析结果
     var currentDescription: String {
-        self == .auto ? "自动 · \(Self.autoResolved.desp)" : desp
+        self == .auto ? "自动 · \(Self.autoLimit.desp)" : desp
     }
 }
