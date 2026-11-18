@@ -205,7 +205,8 @@ class SettingsViewController: UIViewController {
             SectionModel(title: "进度控制") {
                 Toggle(title: "从上次退出的位置继续播放", setting: Settings.continuePlay, onChange: Settings.continuePlay.toggle())
                 Toggle(title: "自动跳过片头片尾", setting: Settings.autoSkip, onChange: Settings.autoSkip.toggle())
-                Toggle(title: "连续播放", setting: Settings.continouslyPlay, onChange: Settings.continouslyPlay.toggle())
+                Toggle(title: "连续播放（分P/合集/番剧下一集）", setting: Settings.continouslyPlay, onChange: Settings.continouslyPlay.toggle())
+                Toggle(title: "没有下一集时播放相关推荐", setting: Settings.continouslyPlayRelated, onChange: Settings.continouslyPlayRelated.toggle())
                 Actions(title: "空降助手广告屏蔽", message: "",
                         current: Settings.enableSponsorBlock.title,
                         options: SponsorBlockType.allCases,

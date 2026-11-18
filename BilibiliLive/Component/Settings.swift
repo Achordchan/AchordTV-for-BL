@@ -88,8 +88,13 @@ enum Settings {
     @UserDefault("DLNA.enable", defaultValue: true)
     static var enableDLNA: Bool
 
+    /// 播完自动播放下一集：分 P、UGC 合集、番剧（仅普通播放；沉浸式 Feed 始终自动下一条）
     @UserDefault("Settings.continouslyPlay", defaultValue: true)
     static var continouslyPlay: Bool
+
+    /// 没有下一集时按当前视频的相关推荐继续播放
+    @UserDefault("Settings.continouslyPlayRelated", defaultValue: true)
+    static var continouslyPlayRelated: Bool
 
     @UserDefault("Settings.loopPlay", defaultValue: false)
     static var loopPlay: Bool

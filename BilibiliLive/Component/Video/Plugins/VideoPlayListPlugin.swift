@@ -10,7 +10,7 @@ import AVKit
 class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
     private let nextActionIdentifierPrefix = "play.next"
     private weak var playerVC: AVPlayerViewController?
-    var onPlayEnd: (() -> Void)?
+    var onPlayerDidEnd: ((AVPlayer) -> Void)?
     var onPlayNextWithInfo: ((PlayInfo) -> Void)?
     var onShowCurrentDetail: ((PlayInfo) -> Void)?
 
@@ -72,25 +72,9 @@ class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
         return []
     }
 
+    /// 播完后的去向（下一集 / 循环 / 相关推荐 / 退出）统一由 VideoPlayerViewModel 决定
     func playerDidEnd(player: AVPlayer) {
-        Task { [weak self] in
-            guard let self else { return }
-            if !(await playNext()) {
-                if Settings.loopPlay {
-                    await MainActor.run {
-                        self.sequenceProvider?.reset()
-                    }
-                    if !(await playNext()) {
-                        player.currentItem?.seek(to: .zero, completionHandler: nil)
-                        player.play()
-                    }
-                    return
-                }
-                await MainActor.run { [weak self] in
-                    self?.onPlayEnd?()
-                }
-            }
-        }
+        onPlayerDidEnd?(player)
     }
 
     @discardableResult
