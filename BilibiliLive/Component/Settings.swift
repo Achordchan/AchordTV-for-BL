@@ -5,6 +5,7 @@
 //  Created by whw on 2022/10/19.
 //
 
+import AVFoundation
 import Combine
 import Foundation
 import SwiftUI
@@ -33,7 +34,8 @@ enum Settings {
     @UserDefault("Settings.direatlyEnterVideo", defaultValue: false)
     static var direatlyEnterVideo: Bool
 
-    @UserDefaultCodable("Settings.mediaQuality", defaultValue: .quality_1080p)
+    /// 默认「自动」：大会员按电视能力放开到 4K / 杜比视界，非大会员 1080p
+    @UserDefaultCodable("Settings.mediaQuality", defaultValue: .auto)
     static var mediaQuality: MediaQualityEnum
 
     @UserDefaultCodable("Settings.mediaPlayerSpeed", defaultValue: PlaySpeed.default)
@@ -348,6 +350,7 @@ extension FeaturedDurationLimit {
 }
 
 enum MediaQualityEnum: Codable, CaseIterable {
+    case auto
     case quality_1080p
     case quality_2160p
     case quality_hdr_dolby
@@ -356,6 +359,8 @@ enum MediaQualityEnum: Codable, CaseIterable {
 extension MediaQualityEnum {
     var desp: String {
         switch self {
+        case .auto:
+            return "自动"
         case .quality_1080p:
             return "1080p"
         case .quality_2160p:
@@ -365,8 +370,11 @@ extension MediaQualityEnum {
         }
     }
 
+    /// 档位本身的上限；「自动」按当前账号与设备解析，见 `resolvedQn`
     var qn: Int {
         switch self {
+        case .auto:
+            return Self.autoResolved.qn
         case .quality_1080p:
             return 116
         case .quality_2160p:
@@ -378,6 +386,8 @@ extension MediaQualityEnum {
 
     var fnval: Int {
         switch self {
+        case .auto:
+            return Self.autoResolved.fnval
         case .quality_1080p:
             return 16
         case .quality_2160p:
@@ -385,5 +395,23 @@ extension MediaQualityEnum {
         case .quality_hdr_dolby:
             return 976
         }
+    }
+}
+
+extension MediaQualityEnum {
+    /// 「自动」实际对应的档位：大会员且电视支持 HDR → 杜比视界；大会员 → 4K；否则 1080p
+    static var autoResolved: MediaQualityEnum {
+        guard AccountManager.shared.isActiveAccountVip else { return .quality_1080p }
+        return AVPlayer.eligibleForHDRPlayback ? .quality_hdr_dolby : .quality_2160p
+    }
+
+    /// 播放时真正生效的画质上限（qn）
+    var resolvedQn: Int {
+        self == .auto ? Self.autoResolved.qn : qn
+    }
+
+    /// 设置页右侧显示的当前值，「自动」带上解析结果
+    var currentDescription: String {
+        self == .auto ? "自动 · \(Self.autoResolved.desp)" : desp
     }
 }

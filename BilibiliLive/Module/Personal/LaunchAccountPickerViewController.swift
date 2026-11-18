@@ -168,6 +168,7 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
     private let addBackground = BLGlass.makeView(cornerRadius: avatarSize / 2)
     private let addIconView = UIImageView(image: UIImage(systemName: "plus"))
     private let nameLabel = UILabel()
+    private let vipBadge = VipBadgeView(fontSize: 20)
 
     override func setup() {
         super.setup()
@@ -194,6 +195,14 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
             make.center.equalToSuperview()
         }
 
+        // 大会员标识压在头像底边上，不占额外高度
+        contentView.addSubview(vipBadge)
+        vipBadge.snp.makeConstraints { make in
+            make.centerX.equalTo(avatarView)
+            make.centerY.equalTo(avatarView.snp.bottom).offset(-6)
+            make.width.lessThanOrEqualTo(avatarView)
+        }
+
         nameLabel.font = BLFont.listItem
         nameLabel.textAlignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
@@ -209,6 +218,7 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
         addBackground.isHidden = true
         avatarView.isHidden = false
         nameLabel.text = account.profile.username
+        vipBadge.configure(with: account.profile.vip)
         if let url = URL(string: account.profile.avatar), !account.profile.avatar.isEmpty {
             avatarView.contentMode = .scaleAspectFill
             avatarView.kf.setImage(with: url,
@@ -226,6 +236,7 @@ private final class LaunchAccountCell: BLMotionCollectionViewCell {
         avatarView.kf.cancelDownloadTask()
         avatarView.image = nil
         avatarView.isHidden = true
+        vipBadge.configure(with: nil)
         addBackground.isHidden = false
         nameLabel.text = "添加账号"
     }

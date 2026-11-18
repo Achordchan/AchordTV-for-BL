@@ -181,8 +181,8 @@ class SettingsViewController: UIViewController {
             }
 
             SectionModel(title: "音视频") {
-                Actions(title: "最高画质", message: "4k以上需要大会员",
-                        current: Settings.mediaQuality.desp,
+                Actions(title: "最高画质", message: Self.mediaQualityMessage(),
+                        current: Settings.mediaQuality.currentDescription,
                         options: MediaQualityEnum.allCases,
                         optionString: MediaQualityEnum.allCases.map({ $0.desp }))
                 {
@@ -290,6 +290,24 @@ extension SettingsViewController {
             extraAction?(setting())
             update()
         }
+    }
+
+    /// 最高画质弹窗说明：带上当前账号的大会员状态
+    static func mediaQualityMessage() -> String {
+        let vip = AccountManager.shared.activeAccount?.profile.vip
+        let status: String
+        if let vip, vip.isActive {
+            var text = "当前账号：\(vip.displayName)"
+            if let due = vip.dueDate {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                text += "（\(formatter.string(from: due)) 到期）"
+            }
+            status = text + "，可播放 4K / 杜比视界"
+        } else {
+            status = "当前账号不是大会员，1080p 高帧率及以上画质需要大会员"
+        }
+        return status + "\n「自动」：大会员按电视能力放开到 4K / 杜比视界，否则 1080p"
     }
 
     func Actions<T>(title: String,

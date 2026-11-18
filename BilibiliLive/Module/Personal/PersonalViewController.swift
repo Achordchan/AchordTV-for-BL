@@ -304,6 +304,7 @@ final class PersonalProfileCell: BLMotionCollectionViewCell {
     private let focusFillView = UIView()
     private let avatarView = UIImageView()
     private let nameLabel = UILabel()
+    private let vipBadge = VipBadgeView(fontSize: 20)
     private let hintLabel = UILabel()
     private let chevronView = UIImageView(image: UIImage(systemName: "chevron.right"))
 
@@ -337,7 +338,13 @@ final class PersonalProfileCell: BLMotionCollectionViewCell {
         nameLabel.lineBreakMode = .byTruncatingTail
         hintLabel.font = BLFont.subtitle
 
-        let textStack = UIStackView(arrangedSubviews: [nameLabel, hintLabel])
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let nameRow = UIStackView(arrangedSubviews: [nameLabel, vipBadge])
+        nameRow.axis = .horizontal
+        nameRow.alignment = .center
+        nameRow.spacing = 12
+
+        let textStack = UIStackView(arrangedSubviews: [nameRow, hintLabel])
         textStack.axis = .vertical
         textStack.spacing = 6
         glassView.contentView.addSubview(textStack)
@@ -361,11 +368,13 @@ final class PersonalProfileCell: BLMotionCollectionViewCell {
     func configure(with account: AccountManager.Account?, accountCount: Int) {
         guard let account else {
             nameLabel.text = "未登录"
+            vipBadge.configure(with: nil)
             hintLabel.text = "登录账号"
             avatarView.image = UIImage(systemName: "person.crop.circle.fill")
             return
         }
         nameLabel.text = account.profile.username
+        vipBadge.configure(with: account.profile.vip)
         hintLabel.text = accountCount > 1 ? "切换账号 · 共 \(accountCount) 个" : "切换或添加账号"
         if let url = URL(string: account.profile.avatar), !account.profile.avatar.isEmpty {
             avatarView.kf.setImage(with: url, options: [.processor(DownsamplingImageProcessor(size: CGSize(width: 176, height: 176))), .cacheOriginalImage])

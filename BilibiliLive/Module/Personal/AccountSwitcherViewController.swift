@@ -174,6 +174,7 @@ private final class AccountSwitcherCell: UICollectionViewCell {
     private let avatarView = UIImageView()
     private let nameLabel = UILabel()
     private let badgeLabel = UILabel()
+    private let vipBadge = VipBadgeView(fontSize: 22)
     private let background = UIView()
 
     override init(frame: CGRect) {
@@ -190,6 +191,7 @@ private final class AccountSwitcherCell: UICollectionViewCell {
         super.prepareForReuse()
         avatarView.image = nil
         badgeLabel.isHidden = true
+        vipBadge.configure(with: nil)
         avatarView.backgroundColor = .clear
         avatarView.tintColor = nil
         background.layer.borderWidth = 0
@@ -226,9 +228,15 @@ private final class AccountSwitcherCell: UICollectionViewCell {
         badgeLabel.textAlignment = .center
         badgeLabel.isHidden = true
 
+        let badgeRow = UIStackView(arrangedSubviews: [vipBadge, badgeLabel])
+        badgeRow.translatesAutoresizingMaskIntoConstraints = false
+        badgeRow.axis = .horizontal
+        badgeRow.alignment = .center
+        badgeRow.spacing = 12
+
         background.addSubview(avatarView)
         background.addSubview(nameLabel)
-        background.addSubview(badgeLabel)
+        background.addSubview(badgeRow)
 
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -245,12 +253,14 @@ private final class AccountSwitcherCell: UICollectionViewCell {
             nameLabel.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
             nameLabel.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
 
-            badgeLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 16),
-            badgeLabel.centerXAnchor.constraint(equalTo: background.centerXAnchor),
+            badgeRow.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 16),
+            badgeRow.centerXAnchor.constraint(equalTo: background.centerXAnchor),
+            badgeRow.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 16),
             badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
             badgeLabel.heightAnchor.constraint(equalToConstant: 40),
+            vipBadge.heightAnchor.constraint(equalToConstant: 40),
             // 标签与卡片底边至少留出 28pt，不贴边
-            badgeLabel.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -28),
+            badgeRow.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -28),
         ])
     }
 
@@ -274,6 +284,7 @@ private final class AccountSwitcherCell: UICollectionViewCell {
             avatarView.backgroundColor = UIColor.white.withAlphaComponent(0.05)
         }
         badgeLabel.isHidden = !active
+        vipBadge.configure(with: account.profile.vip)
     }
 }
 

@@ -415,7 +415,7 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         } else {
             // 默认模式：自适应模式
             // 使用设置中的画质限制
-            let qualityLimit = Settings.mediaQuality.qn
+            let qualityLimit = Settings.mediaQuality.resolvedQn
             videos = videos.filter { $0.id <= qualityLimit }
 
             // 保留最高画质 + 中等画质（1080P）+ 低画质（720P 及以下）作为后备
