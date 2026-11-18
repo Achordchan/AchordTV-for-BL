@@ -229,6 +229,10 @@ final class AutoplayTransitionPresenter {
         self.hostView = hostView
     }
 
+    var isShowing: Bool {
+        card != nil
+    }
+
     func show(_ transition: AutoplayTransition, isUpdate: Bool) {
         if let card {
             card.configure(transition)
